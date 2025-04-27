@@ -1,6 +1,6 @@
 [tool.ruff.lint]
 extend-select = ["I"]
-gnore = [
+ignore = [
     "E402", # Module level import not at top of file
     "E711",# Comparison to 'None' should be 'cond is None'
     "E712",# Comparison to 'False' should be 'cond is False' or 'if not cond:'
