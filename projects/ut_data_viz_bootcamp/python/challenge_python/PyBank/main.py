@@ -86,6 +86,9 @@ with open(fileName, "r") as csvfile:  # Opens the file with reader settings as c
 
 print(results)  # print results.
 
-textCopy = open("textCopy.txt", "w")  # Ceates copy as TXT
+textCopy = open(
+    f"{os.getcwd()}/projects/ut_data_viz_bootcamp/python/challenge_python/PyBank/textCopy.txt",
+    "w",
+)  # Ceates copy as TXT
 print(results, file=textCopy)
 textCopy.close()
