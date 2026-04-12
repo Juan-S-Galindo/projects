@@ -7,14 +7,9 @@ repos:
       - id: trailing-whitespace
       - id: check-merge-conflict
 
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    # Ruff version.
-    rev: v0.11.7
+  - repo: local
     hooks:
-    # Run the linter.
-    - id: ruff
-      types_or: [ python, pyi, jupyter ]
-      args: [ --fix ]
-    # Run the formatter.
-    - id: ruff-format
-      types_or: [ python, pyi, jupyter ]
+      - id: pants-ruff
+        name: Check Terraform files
+        entry: ./internal/pre_commit_hooks/pants_ruff_fix.sh
+        language: script
