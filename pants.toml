@@ -1,13 +1,24 @@
 [GLOBAL]
-pants_version = "2.25.1"
+pants_version = "2.30.0"
 backend_packages.add = [
-  "pants.backend.build_files.fmt.black",
+    # Python
   "pants.backend.python",
   "pants.backend.python.lint.docformatter",
-  "pants.backend.python.lint.black",
-  "pants.backend.python.lint.flake8",
-  "pants.backend.python.lint.isort",
+  "pants.backend.experimental.python.lint.ruff.check",
   "pants.backend.python.typecheck.mypy",
+
+    # Docker
+  "pants.backend.docker",
+  "pants.backend.docker.lint.hadolint",
+
+    # Repo Plugins
+  "pants.backend.plugin_development",
+  "serverless.plugin",
+
+]
+pythonpath = ["%(buildroot)s/pants-plugins"]
+plugins = [
+    "Jinja2==3.1.6"
 ]
 
 [anonymous-telemetry]
@@ -16,7 +27,7 @@ repo_id = "3B1D361B-E9F1-49A8-B761-03DCC41FD58E"
 
 [source]
 # The Python source root is the repo root. See https://www.pantsbuild.org/docs/source-roots.
-root_patterns = ["/"]
+root_patterns = ["/", "pants-plugins"]
 
 [python]
 # The default interpreter constraints for code in this repo. Individual targets can override
@@ -32,8 +43,9 @@ interpreter_constraints = ["==3.11.*"]
 # https://www.pantsbuild.org/docs/python-third-party-dependencies. This also adds the
 # `generate-lockfiles` goal for Pants to generate the lockfile for you.
 enable_resolves = true
+default_resolve = "lambdas"
 
-resolves = { python-default = "python-default.lock"}
+resolves = { lambdas = "requirements.lock"}
 
 [python-bootstrap]
 # We search for interpreters both on the $PATH and in the `$(pyenv root)/versions` folder.
@@ -41,3 +53,15 @@ resolves = { python-default = "python-default.lock"}
 #  problematic system Pythons. See
 #  https://www.pantsbuild.org/docs/python-interpreter-compatibility#changing-the-interpreter-search-path.
 search_path = ["<PATH>", "<PYENV>"]
+
+[ruff]
+config_discovery = true
+
+[docker]
+use_buildx=true
+env_vars = [
+    "BUILDX_NO_DEFAULT_ATTESTATIONS=1"
+]
+
+[dockerfile-parser]
+use_rust_parser = true
