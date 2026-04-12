@@ -1,14 +1,17 @@
 [GLOBAL]
 pants_version = "2.30.0"
 backend_packages.add = [
+    # Python
   "pants.backend.python",
   "pants.backend.python.lint.docformatter",
-
   "pants.backend.experimental.python.lint.ruff.check",
-
   "pants.backend.python.typecheck.mypy",
-  "pants.backend.docker",
 
+    # Docker
+  "pants.backend.docker",
+  "pants.backend.docker.lint.hadolint",
+
+    # Repo Plugins
   "pants.backend.plugin_development",
   "serverless.plugin",
 
@@ -50,6 +53,9 @@ resolves = { lambdas = "requirements.lock"}
 #  problematic system Pythons. See
 #  https://www.pantsbuild.org/docs/python-interpreter-compatibility#changing-the-interpreter-search-path.
 search_path = ["<PATH>", "<PYENV>"]
+
+[ruff]
+config_discovery = true
 
 [docker]
 use_buildx=true
