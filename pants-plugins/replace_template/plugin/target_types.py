@@ -24,11 +24,11 @@ TemplateValue = Union[str, Tuple[str, ...]]
 TemplateMappings = Dict[str, TemplateValue]
 
 
-class JinjaTemplateDependenciesField(Dependencies):
+class ReplaceTemplateDependenciesField(Dependencies):
     """Field for specifying dependencies of a Jinja template target."""
 
 
-class JinjaTemplateMappingsField(Field):
+class ReplaceTemplateMappingsField(Field):
     """Field for specifying template variable mappings.
 
     This field accepts a dictionary where:
@@ -98,7 +98,7 @@ class JinjaTemplateMappingsField(Field):
         return raw_value
 
 
-class JinjaTemplateSuffxField(StringField):
+class ReplaceTemplateSuffxField(StringField):
     """Field for specifying a custom output filename.
 
     If provided, this field overrides the default output filename
@@ -119,7 +119,7 @@ class JinjaTemplateSuffxField(StringField):
     default = None
 
 
-class JinjaTemplateTarget(Target):
+class ReplaceTemplateTarget(Target):
     """A target for rendering Jinja2 templates with variable substitution.
 
     This target takes a Jinja2 template file and renders it using the
@@ -129,13 +129,13 @@ class JinjaTemplateTarget(Target):
     in the dist directory.
     """
 
-    alias = "jinja_templates_distribution"
+    alias = "replace_templates_distribution"
 
     core_fields = (
         *COMMON_TARGET_FIELDS,
-        JinjaTemplateDependenciesField,
-        JinjaTemplateMappingsField,
-        JinjaTemplateSuffxField,
+        ReplaceTemplateDependenciesField,
+        ReplaceTemplateMappingsField,
+        ReplaceTemplateSuffxField,
     )
 
-    help = "The `jinja_template` target will take in a file with jinja2 templates and render them"
+    help = "The `replace_template` target will take in a file with jinja2 templates and render them"

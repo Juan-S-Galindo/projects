@@ -11,11 +11,11 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from jinja2 import Template
-from jinja_templates.plugin.subsystem import JinjaTemplates
-from jinja_templates.plugin.target_types import (
-    JinjaTemplateDependenciesField,
-    JinjaTemplateMappingsField,
-    JinjaTemplateSuffxField,
+from replace_templates.plugin.subsystem import ReplaceTemplates
+from replace_templates.plugin.target_types import (
+    ReplaceTemplateDependenciesField,
+    ReplaceTemplateMappingsField,
+    ReplaceTemplateSuffxField,
 )
 from pants.core.goals.package import BuiltPackage, BuiltPackageArtifact, PackageFieldSet
 from pants.engine.fs import CreateDigest, Digest, DigestContents, FileContent, PathGlobs
@@ -29,16 +29,16 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
-class JinjaTemplateFieldSet(PackageFieldSet):
+class ReplaceTemplateFieldSet(PackageFieldSet):
     """Field set for Jinja template targets."""
 
-    required_fields = (JinjaTemplateDependenciesField,)
+    required_fields = (ReplaceTemplateDependenciesField,)
 
-    dependencies: JinjaTemplateDependenciesField
+    dependencies: ReplaceTemplateDependenciesField
 
-    template_mappings: JinjaTemplateMappingsField
+    template_mappings: ReplaceTemplateMappingsField
 
-    template_suffix: JinjaTemplateSuffxField
+    template_suffix: ReplaceTemplateSuffxField
 
 
 def _prepare_template_mappings(mappings: FrozenDict) -> Dict[str, str]:
@@ -210,15 +210,15 @@ async def _process_template(
 
 
 @rule(level=LogLevel.DEBUG)
-async def run_jinja_templates(
-    jinja_templates: JinjaTemplates,
-    field_set: JinjaTemplateFieldSet,
+async def run_replace_templates(
+    replace_templates: ReplaceTemplates,
+    field_set: ReplaceTemplateFieldSet,
 ) -> BuiltPackage:
     """Rule to render Jinja templates and create package artifacts.
 
     Args:
 
-        jinja_templates: The Jinja templates subsystem
+        replace_templates: The Jinja templates subsystem
 
         field_set: The field set containing template information
 
@@ -274,4 +274,4 @@ async def run_jinja_templates(
 def rules():
     """Return the rules for the Jinja templates plugin."""
 
-    return [*collect_rules(), UnionRule(PackageFieldSet, JinjaTemplateFieldSet)]
+    return [*collect_rules(), UnionRule(PackageFieldSet, ReplaceTemplateFieldSet)]
