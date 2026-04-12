@@ -13,6 +13,6 @@ resource(
 # https://www.pantsbuild.org/2.18/docs/python/goals/package#creating-a-pex-file-from-a-pex_binary-target
 # https://www.pantsbuild.org/2.18/docs/python/overview/pex-files
 pex_binary(
-  name="app",
-  entry_point="main.py",
+    name="app",
+    entry_point="main.py",
 )

@@ -225,47 +225,47 @@ async def run_serverless_templates(
         Targets, DependenciesRequest(field_set.config_files)
     )
 
-    serverless_replace_mappings = {
+    serverless_jinja_mappings = {
         "SERVICE_NAME": stack_name,
         "DEPLOYMENT_BUCKET": bucket_name,
     }
     resources_targets = await Get(Targets, DependenciesRequest(field_set.resources))
     if resources_targets:
-        serverless_replace_mappings["RESOURCES"] = _get_dependencies_mappings(
+        serverless_jinja_mappings["RESOURCES"] = _get_dependencies_mappings(
             resources_targets,
             "RESOURCES",
             field_set.address.spec_path,
         )
 
     if field_set.s3_cleaner_bucket_names.value:
-        serverless_replace_mappings[
-            "S3_CLEANER_BUCKETS_PLUGIN"
-        ] = "- serverless-s3-cleaner"
+        serverless_jinja_mappings["S3_CLEANER_BUCKETS_PLUGIN"] = (
+            "- serverless-s3-cleaner"
+        )
 
-        serverless_replace_mappings["S3_CLEANER_BUCKETS"] = "serverless-s3-cleaner:\n"
-        serverless_replace_mappings["S3_CLEANER_BUCKETS"] += "    buckets:\n"
+        serverless_jinja_mappings["S3_CLEANER_BUCKETS"] = "serverless-s3-cleaner:\n"
+        serverless_jinja_mappings["S3_CLEANER_BUCKETS"] += "    buckets:\n"
 
         for bucket in field_set.s3_cleaner_bucket_names.value:
-            serverless_replace_mappings["S3_CLEANER_BUCKETS"] += (
+            serverless_jinja_mappings["S3_CLEANER_BUCKETS"] += (
                 "      - " + bucket + "\n"
             )
 
     if field_set.deploy_api_gateway.value:
-        serverless_replace_mappings[
-            "IMPORT_API_GATEWAY_PLUGIN"
-        ] = "- serverless-import-apigateway"
+        serverless_jinja_mappings["IMPORT_API_GATEWAY_PLUGIN"] = (
+            "- serverless-import-apigateway"
+        )
 
-        serverless_replace_mappings["IMPORT_API_GATEWAY"] = "importApiGateway:\n"
-        serverless_replace_mappings[
-            "IMPORT_API_GATEWAY"
-        ] += "    name: nsl-${env:AWS_ACCOUNT_NAME_ABBREVIATION}-${env:DEPLOY_TAG}\n"
-        serverless_replace_mappings["IMPORT_API_GATEWAY"] += "    path: /\n"
-        serverless_replace_mappings["IMPORT_API_GATEWAY"] += "    resources:\n"
-        serverless_replace_mappings["IMPORT_API_GATEWAY"] += "      - /v3\n"
+        serverless_jinja_mappings["IMPORT_API_GATEWAY"] = "importApiGateway:\n"
+        serverless_jinja_mappings["IMPORT_API_GATEWAY"] += (
+            "    name: nsl-${env:AWS_ACCOUNT_NAME_ABBREVIATION}-${env:DEPLOY_TAG}\n"
+        )
+        serverless_jinja_mappings["IMPORT_API_GATEWAY"] += "    path: /\n"
+        serverless_jinja_mappings["IMPORT_API_GATEWAY"] += "    resources:\n"
+        serverless_jinja_mappings["IMPORT_API_GATEWAY"] += "      - /v3\n"
 
     functions_targets = await Get(Targets, DependenciesRequest(field_set.functions))
     if functions_targets:
-        serverless_replace_mappings["FUNCTIONS"] = _get_dependencies_mappings(
+        serverless_jinja_mappings["FUNCTIONS"] = _get_dependencies_mappings(
             functions_targets,
             "FUNCTIONS",
             field_set.address.spec_path,
@@ -275,7 +275,7 @@ async def run_serverless_templates(
             field_set.address.spec_path,
         )
         if docker_mappings:
-            serverless_replace_mappings["IMAGES"] = docker_mappings
+            serverless_jinja_mappings["IMAGES"] = docker_mappings
 
     output_digests: List[FileContent] = []
     output_artifacts: List[BuiltPackageArtifact] = []
@@ -289,7 +289,7 @@ async def run_serverless_templates(
         try:
             file_content, artifact = await _process_template(
                 target,
-                serverless_replace_mappings,
+                serverless_jinja_mappings,
                 field_set.address.spec_path,
                 ".tmpl",
             )
@@ -307,10 +307,6 @@ async def run_serverless_templates(
         digest=digest,
         artifacts=tuple(output_artifacts),
     )
-    # return BuiltPackage(
-    #     digest=await Get(Digest, CreateDigest([])),
-    #     artifacts=(),
-    # )
 
 
 def rules():
