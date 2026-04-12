@@ -80,7 +80,7 @@ class ServerlessSourceTemplateDependenciesField(Dependencies):
     value: Optional[list]
     help = "Array with all the config files that will be deployed."
     required = False
-    default = ["internal/serverless_templates:service", "//:serverless_global_config"]
+    default = ["pants-plugins/serverless/plugin/serverless_templates:service", "//:serverless_global_config"]
 
 
 class ServerlessStackNameField(StringField):
