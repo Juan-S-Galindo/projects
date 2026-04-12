@@ -10,6 +10,6 @@ repos:
   - repo: local
     hooks:
       - id: pants-ruff
-        name: Check Terraform files
+        name: Check Pants Ruff Fix
         entry: ./internal/pre_commit_hooks/pants_ruff_fix.sh
         language: script
