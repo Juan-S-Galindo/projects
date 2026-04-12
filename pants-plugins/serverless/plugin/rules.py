@@ -18,7 +18,6 @@ from pants.engine.target import DependenciesRequest, SourcesField, Targets
 from pants.engine.unions import UnionRule
 from pants.util.frozendict import FrozenDict
 from pants.util.logging import LogLevel
-
 from serverless.plugin.subsystem import ServerlessTemplates
 from serverless.plugin.target_types import (
     ServerlessConfigDependenciesField,
