@@ -1,0 +1,15 @@
+ingestBankOfAmericaTransactions:
+  name: ingest-bank-of-america-transactions-${self:provider.stage}
+  image: image_name
+  memorySize: 128
+  timeout: 30
+  tags:
+    - ingest
+  environment:
+    NODE_ENV: ${self:provider.stage}
+  iamRoleStatementsInherit: true
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:GetObject"
+      Resource: "arn:aws:s3:::my-bucket/*"

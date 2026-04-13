@@ -1,0 +1,18 @@
+ service: {{SERVICE_NAME}} # Needs deploy tag to make outputs unique https://github.com/serverless/serverless/issues/9361#issuecomment-1111296767
+
+{{PLUGINS}}
+frameworkVersion: "3"
+
+provider:
+  name: aws
+{{PROVIDER_CONFIG}}
+{{IAM_ROLE_STATEMENTS}}
+
+package:
+  individually: true # Package each function as an individual artifact (default: false)
+
+{{CUSTOM}}
+
+{{FUNCTIONS}}
+
+{{RESOURCES}}
