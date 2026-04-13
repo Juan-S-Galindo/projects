@@ -8,7 +8,7 @@ ifneq ($(shell which $(BREW_BIN) >/dev/null 2>&1 && echo 0 || echo 1),0)
 	$(error Cannot find '$(BREW_BIN)', Make sure it is isntalled and the PATH is set up correctly)
 endif
 
-BREW_PACKAGES := pantsbuild/tap/pants aws-sam-cli awscli coreutils findutils gh jq pre-commit python@$(PYTHON_VERSION) postgresql@$(POSTGRES_VERSION)
+BREW_PACKAGES := pantsbuild/tap/pants aws-sam-cli awscli coreutils findutils gh jq pre-commit python@$(PYTHON_VERSION) postgresql@$(POSTGRES_VERSION) serverless
 BREW_CASK_PACKAGES := docker mongodb-compass
 
 PRECOMMIT_MARKER := $(CURDIR)/.git/hooks/pre-commit
