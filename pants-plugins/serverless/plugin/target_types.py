@@ -4,13 +4,15 @@ This module defines the target types and fields used by the Serverless
 plugin to manage and deploy serverless applications.
 """
 
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, Mapping, Optional, Tuple, Union
 
 from pants.engine.addresses import Address
 from pants.engine.target import (
     COMMON_TARGET_FIELDS,
     BoolField,
     Dependencies,
+    Field,
+    InvalidFieldTypeException,
     StringField,
     StringSequenceField,
     Target,
@@ -83,7 +85,7 @@ class ServerlessSourceTemplateDependenciesField(Dependencies):
     default = ["pants-plugins/serverless/plugin/serverless_templates:service", "//:serverless_global_config"]
 
 
-class ServerlessStackNameField(StringField):
+class ServerlessServiceField(StringField):
     """Field for specifying the CloudFormation stack name.
 
     This field defines the name of the CloudFormation stack that will be
@@ -91,22 +93,10 @@ class ServerlessStackNameField(StringField):
     within an AWS account and region.
     """
 
-    alias = "stack_name"
+    alias = "service"
     help = "The name of the stack to deploy."
     required = True
 
-
-class ServerlessDeploymentBucketNameField(StringField):
-    """Field for specifying the S3 deployment bucket name.
-
-    This field defines the name of the S3 bucket that will be used to
-    store deployment artifacts. The bucket must exist and be accessible
-    to the deployment process.
-    """
-
-    alias = "deployment_bucket"
-    help = "The name of the bucket to deploy deployment artifacts to."
-    required = True
 
 
 class ServerlessS3CleanerBucketNamesField(StringSequenceField):
@@ -136,6 +126,91 @@ class ServerlessDeployApiGatewayField(BoolField):
     required = False
 
 
+def _freeze_provider_config(raw: Mapping) -> FrozenDict:
+    """Recursively convert a provider config mapping to a FrozenDict.
+
+    String values are kept as-is; nested dicts are frozen recursively.
+    """
+    result: Dict[str, Any] = {}
+    for k, v in raw.items():
+        if isinstance(v, Mapping):
+            result[k] = _freeze_provider_config(v)
+        else:
+            result[k] = str(v)
+    return FrozenDict(result)
+
+
+class ServerlessProviderConfigField(Field):
+    """Field for configuring the serverless provider section.
+
+    Each key maps to a top-level property under ``provider:`` in
+    serverless.yml.  Values may be plain strings (SLS references like
+    ``${env:FOO}`` are preserved verbatim) or nested dicts for multi-level
+    YAML blocks (e.g. ``vpc``, ``tracing``).
+
+    Use ``{{SERVICE_NAME}}`` in any string value to reference the resolved
+    stack name.
+    """
+
+    alias = "provider_config"
+    help = "Key/value pairs for the provider section of serverless.yml. Values may be strings or nested dicts."
+    required = False
+    default = FrozenDict({})
+
+    @classmethod
+    def compute_value(cls, raw_value: Optional[Any], address: Address) -> FrozenDict:
+        if raw_value is None:
+            return cls.default
+        if not isinstance(raw_value, Mapping):
+            raise InvalidFieldTypeException(
+                address, cls.alias, raw_value, expected_type="a dict"
+            )
+        return _freeze_provider_config(raw_value)
+
+
+def _freeze_iam_statement(raw: dict) -> FrozenDict:
+    result: Dict[str, Any] = {}
+    for k, v in raw.items():
+        if isinstance(v, (list, tuple)):
+            result[k] = tuple(str(i) for i in v)
+        else:
+            result[k] = str(v)
+    return FrozenDict(result)
+
+
+class ServerlessGlobalIamStatementsField(Field):
+    """Optional list of IAM statements for the provider iamRoleStatements
+    block.
+
+    When set, ``- serverless-iam-roles-per-function`` is automatically
+    added to the plugins section. Each entry is a dict with ``Effect``,
+    ``Action`` (list), and ``Resource`` (string or list) keys.
+    """
+
+    alias = "global_iam_statements"
+    help = (
+        "List of IAM statement dicts for the provider iamRoleStatements block. "
+        "Setting this also enables the serverless-iam-roles-per-function plugin."
+    )
+    required = False
+    default = None
+
+    @classmethod
+    def compute_value(
+        cls, raw_value: Optional[Any], address: Address
+    ) -> Optional[Tuple[FrozenDict, ...]]:
+        if raw_value is None:
+            return None
+        if not isinstance(raw_value, (list, tuple)):
+            raise InvalidFieldTypeException(
+                address,
+                cls.alias,
+                raw_value,
+                expected_type="a list of IAM statement dicts",
+            )
+        return tuple(_freeze_iam_statement(s) for s in raw_value)
+
+
 class ServerlessTemplateTarget(Target):
     """A target for managing serverless application deployments.
 
@@ -151,11 +226,12 @@ class ServerlessTemplateTarget(Target):
         *COMMON_TARGET_FIELDS,
         ServerlessFunctionsDependenciesField,
         ServerlessResourcesDependenciesField,
-        ServerlessStackNameField,
-        ServerlessDeploymentBucketNameField,
+        ServerlessServiceField,
         ServerlessConfigDependenciesField,
         ServerlessSourceTemplateDependenciesField,
         ServerlessS3CleanerBucketNamesField,
         ServerlessDeployApiGatewayField,
+        ServerlessProviderConfigField,
+        ServerlessGlobalIamStatementsField,
     )
     help = "A target for managing and deploying serverless applications to AWS"

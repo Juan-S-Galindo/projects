@@ -1,70 +1,13 @@
- service: {{SERVICE_NAME}}-${env:DEPLOY_TAG} # Needs deploy tag to make outputs unique https://github.com/serverless/serverless/issues/9361#issuecomment-1111296767
+ service: {{SERVICE_NAME}} # Needs deploy tag to make outputs unique https://github.com/serverless/serverless/issues/9361#issuecomment-1111296767
 
-plugins:
-  - serverless-iam-roles-per-function
-  {{IMPORT_API_GATEWAY_PLUGIN}}
-  {{S3_CLEANER_BUCKETS_PLUGIN}}
-
+{{PLUGINS}}
 frameworkVersion: "3"
 
 provider:
   name: aws
-  stackName: {{SERVICE_NAME}}-${env:DEPLOY_TAG}-ndl
-  architecture: ${env:CPU_ARCH}
-  region: ${env:AWS_REGION}
-  versionFunctions: false  #Use function versioning (enabled by default)
-  environment: ${file(environment.yml):environment} # Function environment variables
-  stackTags: ${file(environment.yml):stackTags.common} # Optional CloudFormation tags to apply to the stack
-  timeout: 60  # Default timeout for functions (default: 6 seconds) - Note: API Gateway has a maximum timeout of 30 second
-  tracing: # Activates aws lambda tracing
-    lambda: true
-  vpc:
-    securityGroupIds: ${file(serverless_global_config.yml):${env:AWS_ACCOUNT_NAME}.${env:AWS_REGION}.vpc.securityGroupIds}
-    subnetIds: ${file(serverless_global_config.yml):${env:AWS_ACCOUNT_NAME}.${env:AWS_REGION}.vpc.subnetIds}
-  iamRoleStatements:
-    - Effect: "Allow"
-      Action:
-        - "xray:PutTraceSegments"
-        - "xray:PutTelemetryRecords"
-        - "xray:GetSamplingRules"
-        - "xray:GetSamplingTargets"
-        - "xray:GetSamplingStatisticSummaries"
-      Resource: "*"
-    - Effect: "Allow"
-      Action:
-        - "ec2:DescribeNetworkInterfaces"
-        - "ec2:CreateNetworkInterface"
-        - "ec2:DeleteNetworkInterface"
-        - "ec2:DescribeInstances"
-        - "ec2:AttachNetworkInterface"
-        - "ec2:AssignPrivateIpAddresses"
-        - "ec2:UnassignPrivateIpAddresses"
-      Resource:
-        - "*"
-    - Effect: "Allow"
-      Action:
-        - "logs:CreateLogGroup"
-        - "logs:CreateLogStream"
-        - "logs:PutLogEvents"
-        - "logs:DescribeLogStreams"
-      Resource: "*"
-    - Effect: "Allow"
-      Action:
-        - "kms:Sign"
-      Resource: ${file(serverless_global_config.yml):${env:AWS_ACCOUNT_NAME}.${env:AWS_REGION}.iam_kms_permissions.kms_aliases}
-    - Effect: "Allow"
-      Action:
-        - "kms:GenerateDataKey"
-        - "kms:Decrypt"
-      Resource: ${file(serverless_global_config.yml):${env:AWS_ACCOUNT_NAME}.${env:AWS_REGION}.iam_kms_permissions.kms_keys}
-    - Effect: Allow
-      Action:
-        - 'secretsmanager:GetSecretValue'
-      Resource:
-        - arn:aws:secretsmanager:${env:AWS_REGION}:${env:AWS_ACCOUNT_NUMBER}:secret:/${env:AWS_ACCOUNT_NAME}/datadog/nomi-services-layer/api_credentials-*
+{{PROVIDER_CONFIG}}
+{{IAM_ROLE_STATEMENTS}}
 
-  deploymentBucket: # Specify specific deployment bucket. If not specified, SLS will crate its own.
-    name: {{DEPLOYMENT_BUCKET}} # We can use same bucket and divide by deploymentPrefix https://www.serverless.com/framework/docs/providers/aws/guide/serverless.yml
   {{IMAGES}}
 
 package:

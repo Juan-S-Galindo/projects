@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from collections.abc import Mapping
+
 from jinja2 import Template
 from pants.core.goals.package import BuiltPackage, BuiltPackageArtifact, PackageFieldSet
 from pants.engine.fs import CreateDigest, Digest, DigestContents, FileContent, PathGlobs
@@ -22,12 +24,13 @@ from serverless.plugin.subsystem import ServerlessTemplates
 from serverless.plugin.target_types import (
     ServerlessConfigDependenciesField,
     ServerlessDeployApiGatewayField,
-    ServerlessDeploymentBucketNameField,
     ServerlessFunctionsDependenciesField,
+    ServerlessGlobalIamStatementsField,
+    ServerlessProviderConfigField,
     ServerlessResourcesDependenciesField,
     ServerlessS3CleanerBucketNamesField,
     ServerlessSourceTemplateDependenciesField,
-    ServerlessStackNameField,
+    ServerlessServiceField,
 )
 
 logger = logging.getLogger(__name__)
@@ -37,12 +40,13 @@ logger = logging.getLogger(__name__)
 class ServerlessTemplateFieldSet(PackageFieldSet):
     """Field set for Jinja template targets."""
 
-    required_fields = (ServerlessStackNameField, ServerlessDeploymentBucketNameField)
+    required_fields = (ServerlessServiceField,)
 
-    stack_name: ServerlessStackNameField
-    deployment_bucket: ServerlessDeploymentBucketNameField
+    service: ServerlessServiceField
     s3_cleaner_bucket_names: ServerlessS3CleanerBucketNamesField
     deploy_api_gateway: ServerlessDeployApiGatewayField
+    provider_config: ServerlessProviderConfigField
+    global_iam_statements: ServerlessGlobalIamStatementsField
 
     functions: ServerlessFunctionsDependenciesField
     resources: ServerlessResourcesDependenciesField
@@ -161,6 +165,66 @@ async def _process_template(
     )
 
 
+def _provider_config_to_yaml(config: Mapping, indent: int = 2) -> str:
+    """Recursively convert a provider config mapping to indented YAML lines.
+
+    String values are emitted verbatim so that SLS references like
+    ``${env:FOO}`` are preserved.  Nested mappings (e.g. ``vpc``, ``tracing``)
+    are expanded as YAML blocks at the next indentation level.
+
+    Args:
+        config: Mapping of provider property name → string or nested mapping.
+        indent: Number of spaces for the current indentation level.
+
+    Returns:
+        Multi-line string ready to be substituted into the template.
+    """
+    spaces = " " * indent
+    lines: List[str] = []
+    for key, value in config.items():
+        if isinstance(value, Mapping):
+            lines.append(f"{spaces}{key}:")
+            lines.append(_provider_config_to_yaml(value, indent + 2))
+        else:
+            lines.append(f"{spaces}{key}: {value}")
+    return "\n".join(lines)
+
+
+def _iam_statements_to_yaml(statements: tuple, indent: int = 2) -> str:
+    """Serialise a tuple of frozen IAM statement dicts to indented YAML.
+
+    Produces the ``iamRoleStatements:`` block ready for template substitution.
+    String values are emitted verbatim so SLS references are preserved.
+
+    Args:
+        statements: Tuple of frozen IAM statement dicts.
+        indent: Base indentation for the block key (default 2).
+
+    Returns:
+        Multi-line YAML string starting with ``  iamRoleStatements:``.
+    """
+    base = " " * indent
+    item = " " * (indent + 2)
+    field = " " * (indent + 4)
+    lines: List[str] = [f"{base}iamRoleStatements:"]
+    for stmt in statements:
+        effect = stmt.get("Effect", "Allow")
+        actions = stmt.get("Action", ())
+        resource = stmt.get("Resource", "*")
+
+        lines.append(f"{item}- Effect: {effect}")
+        lines.append(f"{field}Action:")
+        for action in (actions if isinstance(actions, (list, tuple)) else (actions,)):
+            lines.append(f"{field}  - {action}")
+        if isinstance(resource, (list, tuple)):
+            lines.append(f"{field}Resource:")
+            for r in resource:
+                lines.append(f"{field}  - {r}")
+        else:
+            lines.append(f"{field}Resource: {resource}")
+    return "\n".join(lines)
+
+
 def _get_dependencies_mappings(targets, mapping_key: str, target_path: str):
     if mapping_key == "RESOURCES":
         sls_key = "resources:"
@@ -213,9 +277,8 @@ async def run_serverless_templates(
     Returns:
         A built package containing the rendered templates
     """
-    stack_name = field_set.stack_name.value
-    bucket_name = field_set.deployment_bucket.value
-    logger.info(f"Processing template at {stack_name}")
+    service = field_set.service.value
+    logger.info(f"Processing template at {service}")
 
     source_templates_targets = await Get(
         Targets, DependenciesRequest(field_set.source_templates)
@@ -224,10 +287,27 @@ async def run_serverless_templates(
         Targets, DependenciesRequest(field_set.config_files)
     )
 
+    def _resolve_service_name(config: Mapping) -> dict:
+        result = {}
+        for k, v in config.items():
+            if isinstance(v, Mapping):
+                result[k] = _resolve_service_name(v)
+            else:
+                result[k] = v.replace("{{SERVICE_NAME}}", service)
+        return result
+
+    resolved_provider_config = _resolve_service_name(field_set.provider_config.value)
+
     serverless_jinja_mappings = {
-        "SERVICE_NAME": stack_name,
-        "DEPLOYMENT_BUCKET": bucket_name,
+        "SERVICE_NAME": service,
+        "PROVIDER_CONFIG": _provider_config_to_yaml(resolved_provider_config),
     }
+
+    if field_set.global_iam_statements.value is not None:
+        serverless_jinja_mappings["IAM_ROLE_STATEMENTS"] = _iam_statements_to_yaml(
+            field_set.global_iam_statements.value
+        )
+
     resources_targets = await Get(Targets, DependenciesRequest(field_set.resources))
     if resources_targets:
         serverless_jinja_mappings["RESOURCES"] = _get_dependencies_mappings(
@@ -237,23 +317,12 @@ async def run_serverless_templates(
         )
 
     if field_set.s3_cleaner_bucket_names.value:
-        serverless_jinja_mappings["S3_CLEANER_BUCKETS_PLUGIN"] = (
-            "- serverless-s3-cleaner"
-        )
-
         serverless_jinja_mappings["S3_CLEANER_BUCKETS"] = "serverless-s3-cleaner:\n"
         serverless_jinja_mappings["S3_CLEANER_BUCKETS"] += "    buckets:\n"
-
         for bucket in field_set.s3_cleaner_bucket_names.value:
-            serverless_jinja_mappings["S3_CLEANER_BUCKETS"] += (
-                "      - " + bucket + "\n"
-            )
+            serverless_jinja_mappings["S3_CLEANER_BUCKETS"] += "      - " + bucket + "\n"
 
     if field_set.deploy_api_gateway.value:
-        serverless_jinja_mappings["IMPORT_API_GATEWAY_PLUGIN"] = (
-            "- serverless-import-apigateway"
-        )
-
         serverless_jinja_mappings["IMPORT_API_GATEWAY"] = "importApiGateway:\n"
         serverless_jinja_mappings["IMPORT_API_GATEWAY"] += (
             "    name: nsl-${env:AWS_ACCOUNT_NAME_ABBREVIATION}-${env:DEPLOY_TAG}\n"
@@ -261,6 +330,16 @@ async def run_serverless_templates(
         serverless_jinja_mappings["IMPORT_API_GATEWAY"] += "    path: /\n"
         serverless_jinja_mappings["IMPORT_API_GATEWAY"] += "    resources:\n"
         serverless_jinja_mappings["IMPORT_API_GATEWAY"] += "      - /v3\n"
+
+    plugins: List[str] = []
+    if field_set.global_iam_statements.value is not None:
+        plugins.append("  - serverless-iam-roles-per-function")
+    if field_set.deploy_api_gateway.value:
+        plugins.append("  - serverless-import-apigateway")
+    if field_set.s3_cleaner_bucket_names.value:
+        plugins.append("  - serverless-s3-cleaner")
+    if plugins:
+        serverless_jinja_mappings["PLUGINS"] = "plugins:\n" + "\n".join(plugins)
 
     functions_targets = await Get(Targets, DependenciesRequest(field_set.functions))
     if functions_targets:
