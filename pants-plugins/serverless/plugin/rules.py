@@ -6,11 +6,10 @@ templates and the creation of package artifacts.
 
 import logging
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-
-from collections.abc import Mapping
 
 from jinja2 import Template
 from pants.core.goals.package import BuiltPackage, BuiltPackageArtifact, PackageFieldSet
@@ -24,15 +23,14 @@ from serverless.plugin.subsystem import ServerlessTemplates
 from serverless.plugin.target_types import (
     ServerlessConfigDependenciesField,
     ServerlessCustomConfigField,
-    ServerlessImportGatewayField,
-
     ServerlessFunctionsDependenciesField,
     ServerlessGlobalIamStatementsField,
+    ServerlessImportGatewayField,
     ServerlessProviderConfigField,
     ServerlessResourcesDependenciesField,
     ServerlessS3CleanerBucketNamesField,
-    ServerlessSourceTemplateDependenciesField,
     ServerlessServiceField,
+    ServerlessSourceTemplateDependenciesField,
 )
 
 logger = logging.getLogger(__name__)
@@ -272,27 +270,6 @@ def _get_dependencies_mappings(targets, mapping_key: str, target_path: str):
     return output_mappings
 
 
-def _get_docker_mappings(targets, target_path: str):
-    header = False
-    for target in targets:
-        source_path = _get_source_path(target=target)
-        if source_path.endswith("Dockerfile"):
-            if not header:
-                output_mappings = """ecr:
-    images:
-"""
-                header = True
-
-            serverless_relative_path = Path(source_path.replace(f"{target_path}/", ""))
-            dir_name = target.address.spec_path.split("/")[-1]
-
-            output_mappings += f"      {dir_name}_seb:\n"
-            output_mappings += f"        path: ./{serverless_relative_path.parent}\n"
-            output_mappings += f"        file: Dockerfile\n"
-    if header:
-        return output_mappings
-
-
 @rule(level=LogLevel.DEBUG)
 async def run_serverless_templates(
     serverless_templates: ServerlessTemplates,
@@ -376,12 +353,6 @@ async def run_serverless_templates(
             "FUNCTIONS",
             field_set.address.spec_path,
         )
-        docker_mappings = _get_docker_mappings(
-            functions_targets,
-            field_set.address.spec_path,
-        )
-        if docker_mappings:
-            serverless_jinja_mappings["IMAGES"] = docker_mappings
 
     output_digests: List[FileContent] = []
     output_artifacts: List[BuiltPackageArtifact] = []

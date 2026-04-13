@@ -10,7 +10,7 @@ file(
 
 serverless(
     name="sls",
-    service="budgeting-app",
+    service="budgeting-app-${env:DEPLOY_TAG}",
     config_files=[":environment"],
     resources = [
         "aws/budgeting_app:resources"
