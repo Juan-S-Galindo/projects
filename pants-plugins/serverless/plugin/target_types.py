@@ -113,31 +113,19 @@ class ServerlessS3CleanerBucketNamesField(StringSequenceField):
     required = False
 
 
-class ServerlessDeployApiGatewayField(BoolField):
-    """Field for specifying if the API Gateway should be deployed.
 
-    This field defines if the API Gateway should be deployed.
+def _freeze_config(raw: Any) -> Any:
+    """Recursively freeze an arbitrary config value into hashable types.
+
+    - Mappings become FrozenDicts.
+    - Lists/tuples become tuples (items frozen recursively).
+    - Everything else is coerced to str.
     """
-
-    alias = "deploy_api_gateway"
-    value: Optional[bool]
-    default = False
-    help = "If the API Gateway should be deployed."
-    required = False
-
-
-def _freeze_provider_config(raw: Mapping) -> FrozenDict:
-    """Recursively convert a provider config mapping to a FrozenDict.
-
-    String values are kept as-is; nested dicts are frozen recursively.
-    """
-    result: Dict[str, Any] = {}
-    for k, v in raw.items():
-        if isinstance(v, Mapping):
-            result[k] = _freeze_provider_config(v)
-        else:
-            result[k] = str(v)
-    return FrozenDict(result)
+    if isinstance(raw, Mapping):
+        return FrozenDict({k: _freeze_config(v) for k, v in raw.items()})
+    if isinstance(raw, (list, tuple)):
+        return tuple(_freeze_config(item) for item in raw)
+    return str(raw)
 
 
 class ServerlessProviderConfigField(Field):
@@ -165,17 +153,65 @@ class ServerlessProviderConfigField(Field):
             raise InvalidFieldTypeException(
                 address, cls.alias, raw_value, expected_type="a dict"
             )
-        return _freeze_provider_config(raw_value)
+        return _freeze_config(raw_value)
+
+
+class ServerlessCustomConfigField(Field):
+    """Field for configuring the serverless custom section.
+
+    Each key maps to a top-level property under ``custom:`` in
+    serverless.yml.  Values may be plain strings, nested dicts, or lists
+    (e.g. ``retryLambdaServiceFailure``).
+
+    Use ``{{SERVICE_NAME}}`` in any string value to reference the resolved
+    stack name.
+    """
+
+    alias = "custom_config"
+    help = "Key/value pairs for the custom section of serverless.yml. Values may be strings, nested dicts, or lists."
+    required = False
+    default = FrozenDict({})
+
+    @classmethod
+    def compute_value(cls, raw_value: Optional[Any], address: Address) -> FrozenDict:
+        if raw_value is None:
+            return cls.default
+        if not isinstance(raw_value, Mapping):
+            raise InvalidFieldTypeException(
+                address, cls.alias, raw_value, expected_type="a dict"
+            )
+        return _freeze_config(raw_value)
+
+
+class ServerlessImportGatewayField(Field):
+    """Optional dict for the importApiGateway custom section entry.
+
+    When set, ``- serverless-import-apigateway`` is automatically added
+    to the plugins section and the value is merged into the ``custom:``
+    block. Values may be plain strings, nested dicts, or lists.
+    """
+
+    alias = "import_gateway"
+    help = (
+        "Dict for the importApiGateway custom section entry. "
+        "Setting this also enables the serverless-import-apigateway plugin."
+    )
+    required = False
+    default = None
+
+    @classmethod
+    def compute_value(cls, raw_value: Optional[Any], address: Address) -> Optional[FrozenDict]:
+        if raw_value is None:
+            return None
+        if not isinstance(raw_value, Mapping):
+            raise InvalidFieldTypeException(
+                address, cls.alias, raw_value, expected_type="a dict"
+            )
+        return _freeze_config(raw_value)
 
 
 def _freeze_iam_statement(raw: dict) -> FrozenDict:
-    result: Dict[str, Any] = {}
-    for k, v in raw.items():
-        if isinstance(v, (list, tuple)):
-            result[k] = tuple(str(i) for i in v)
-        else:
-            result[k] = str(v)
-    return FrozenDict(result)
+    return _freeze_config(raw)
 
 
 class ServerlessGlobalIamStatementsField(Field):
@@ -230,8 +266,9 @@ class ServerlessTemplateTarget(Target):
         ServerlessConfigDependenciesField,
         ServerlessSourceTemplateDependenciesField,
         ServerlessS3CleanerBucketNamesField,
-        ServerlessDeployApiGatewayField,
         ServerlessProviderConfigField,
+        ServerlessCustomConfigField,
+        ServerlessImportGatewayField,
         ServerlessGlobalIamStatementsField,
     )
     help = "A target for managing and deploying serverless applications to AWS"

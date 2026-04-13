@@ -8,7 +8,7 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from collections.abc import Mapping
 
@@ -23,7 +23,9 @@ from pants.util.logging import LogLevel
 from serverless.plugin.subsystem import ServerlessTemplates
 from serverless.plugin.target_types import (
     ServerlessConfigDependenciesField,
-    ServerlessDeployApiGatewayField,
+    ServerlessCustomConfigField,
+    ServerlessImportGatewayField,
+
     ServerlessFunctionsDependenciesField,
     ServerlessGlobalIamStatementsField,
     ServerlessProviderConfigField,
@@ -44,8 +46,10 @@ class ServerlessTemplateFieldSet(PackageFieldSet):
 
     service: ServerlessServiceField
     s3_cleaner_bucket_names: ServerlessS3CleanerBucketNamesField
-    deploy_api_gateway: ServerlessDeployApiGatewayField
+
     provider_config: ServerlessProviderConfigField
+    custom_config: ServerlessCustomConfigField
+    import_gateway: ServerlessImportGatewayField
     global_iam_statements: ServerlessGlobalIamStatementsField
 
     functions: ServerlessFunctionsDependenciesField
@@ -165,28 +169,54 @@ async def _process_template(
     )
 
 
-def _provider_config_to_yaml(config: Mapping, indent: int = 2) -> str:
-    """Recursively convert a provider config mapping to indented YAML lines.
+def _config_to_yaml(value: Any, indent: int = 2) -> str:
+    """Recursively serialise a config value to indented YAML text.
 
-    String values are emitted verbatim so that SLS references like
-    ``${env:FOO}`` are preserved.  Nested mappings (e.g. ``vpc``, ``tracing``)
-    are expanded as YAML blocks at the next indentation level.
+    - Mappings become ``key:\\n  <value>`` blocks.
+    - Lists/tuples become ``- item`` sequences; list items that are Mappings
+      use the standard YAML block-sequence style.
+    - Scalars are emitted verbatim so SLS references (``${env:FOO}``) survive.
 
     Args:
-        config: Mapping of provider property name → string or nested mapping.
+        value: The value to serialise (Mapping, list/tuple, or scalar string).
         indent: Number of spaces for the current indentation level.
 
     Returns:
-        Multi-line string ready to be substituted into the template.
+        Multi-line YAML string (no trailing newline).
     """
     spaces = " " * indent
     lines: List[str] = []
-    for key, value in config.items():
-        if isinstance(value, Mapping):
-            lines.append(f"{spaces}{key}:")
-            lines.append(_provider_config_to_yaml(value, indent + 2))
-        else:
-            lines.append(f"{spaces}{key}: {value}")
+
+    if isinstance(value, Mapping):
+        for k, v in value.items():
+            if isinstance(v, (Mapping, list, tuple)):
+                lines.append(f"{spaces}{k}:")
+                lines.append(_config_to_yaml(v, indent + 2))
+            else:
+                lines.append(f"{spaces}{k}: {v}")
+
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            if isinstance(item, Mapping):
+                item_pairs = list(item.items())
+                first_k, first_v = item_pairs[0]
+                if isinstance(first_v, (Mapping, list, tuple)):
+                    lines.append(f"{spaces}- {first_k}:")
+                    lines.append(_config_to_yaml(first_v, indent + 4))
+                else:
+                    lines.append(f"{spaces}- {first_k}: {first_v}")
+                for k, v in item_pairs[1:]:
+                    if isinstance(v, (Mapping, list, tuple)):
+                        lines.append(f"{spaces}  {k}:")
+                        lines.append(_config_to_yaml(v, indent + 4))
+                    else:
+                        lines.append(f"{spaces}  {k}: {v}")
+            else:
+                lines.append(f"{spaces}- {item}")
+
+    else:
+        lines.append(f"{spaces}{value}")
+
     return "\n".join(lines)
 
 
@@ -287,20 +317,18 @@ async def run_serverless_templates(
         Targets, DependenciesRequest(field_set.config_files)
     )
 
-    def _resolve_service_name(config: Mapping) -> dict:
-        result = {}
-        for k, v in config.items():
-            if isinstance(v, Mapping):
-                result[k] = _resolve_service_name(v)
-            else:
-                result[k] = v.replace("{{SERVICE_NAME}}", service)
-        return result
+    def _resolve_service_name(value: Any) -> Any:
+        if isinstance(value, Mapping):
+            return {k: _resolve_service_name(v) for k, v in value.items()}
+        if isinstance(value, tuple):
+            return tuple(_resolve_service_name(item) for item in value)
+        return value.replace("{{SERVICE_NAME}}", service)
 
     resolved_provider_config = _resolve_service_name(field_set.provider_config.value)
 
     serverless_jinja_mappings = {
         "SERVICE_NAME": service,
-        "PROVIDER_CONFIG": _provider_config_to_yaml(resolved_provider_config),
+        "PROVIDER_CONFIG": _config_to_yaml(resolved_provider_config),
     }
 
     if field_set.global_iam_statements.value is not None:
@@ -316,26 +344,26 @@ async def run_serverless_templates(
             field_set.address.spec_path,
         )
 
-    if field_set.s3_cleaner_bucket_names.value:
-        serverless_jinja_mappings["S3_CLEANER_BUCKETS"] = "serverless-s3-cleaner:\n"
-        serverless_jinja_mappings["S3_CLEANER_BUCKETS"] += "    buckets:\n"
-        for bucket in field_set.s3_cleaner_bucket_names.value:
-            serverless_jinja_mappings["S3_CLEANER_BUCKETS"] += "      - " + bucket + "\n"
+    custom_lines: List[str] = []
+    if field_set.custom_config.value:
+        custom_lines.append(_config_to_yaml(field_set.custom_config.value))
+    if field_set.import_gateway.value is not None:
+        custom_lines.append(_config_to_yaml(field_set.import_gateway.value))
 
-    if field_set.deploy_api_gateway.value:
-        serverless_jinja_mappings["IMPORT_API_GATEWAY"] = "importApiGateway:\n"
-        serverless_jinja_mappings["IMPORT_API_GATEWAY"] += (
-            "    name: nsl-${env:AWS_ACCOUNT_NAME_ABBREVIATION}-${env:DEPLOY_TAG}\n"
-        )
-        serverless_jinja_mappings["IMPORT_API_GATEWAY"] += "    path: /\n"
-        serverless_jinja_mappings["IMPORT_API_GATEWAY"] += "    resources:\n"
-        serverless_jinja_mappings["IMPORT_API_GATEWAY"] += "      - /v3\n"
+    if field_set.s3_cleaner_bucket_names.value:
+        s3_block = "  serverless-s3-cleaner:\n    buckets:"
+        for bucket in field_set.s3_cleaner_bucket_names.value:
+            s3_block += f"\n      - {bucket}"
+        custom_lines.append(s3_block)
+    if custom_lines:
+        serverless_jinja_mappings["CUSTOM"] = "custom:\n" + "\n".join(custom_lines)
 
     plugins: List[str] = []
     if field_set.global_iam_statements.value is not None:
         plugins.append("  - serverless-iam-roles-per-function")
-    if field_set.deploy_api_gateway.value:
+    if field_set.import_gateway.value is not None:
         plugins.append("  - serverless-import-apigateway")
+
     if field_set.s3_cleaner_bucket_names.value:
         plugins.append("  - serverless-s3-cleaner")
     if plugins:

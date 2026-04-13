@@ -13,24 +13,7 @@ provider:
 package:
   individually: true # Package each function as an individual artifact (default: false)
 
-custom:
-  retryLambdaServiceFailure: # Custom retry policy for all lambdas
-    - ErrorEquals:
-        - "Lambda.ServiceException"
-        - "Lambda.AWSLambdaException"
-        - "Lambda.SdkClientException"
-      IntervalSeconds: 2
-      MaxAttempts: 6
-      BackoffRate: 2
-  authorizer:
-    type: CUSTOM
-    authorizerId: !ImportValue ApiGatewayAuthorizerId-${env:DEPLOY_TAG}
-  aws:
-    tags: ${file(serverless_global_config.yml):tags}
-    KmsMasterKeyId: ${file(serverless_global_config.yml):common.kms.ndl.key.${env:AWS_ACCOUNT_NAME}}
-  {{IMPORT_API_GATEWAY}}
-  {{S3_CLEANER_BUCKETS}}
-
+{{CUSTOM}}
 {{FUNCTIONS}}
 
 {{RESOURCES}}

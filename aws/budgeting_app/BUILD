@@ -3,11 +3,19 @@ file(
     source = "environment.yml",
 )
 
+file(
+    name = "resources",
+    source = "resources.s3.yml",
+)
+
 serverless(
     name="sls",
     service="budgeting-app",
     config_files=[":environment"],
     resources = [
+        "aws/budgeting_app:resources"
+    ],
+    functions = [
         "aws/budgeting_app/ingest:function"
     ],
     tags = ['serverless'],
@@ -79,5 +87,35 @@ serverless(
     ],
     "Resource": "${file(serverless_global_config.yml):${env:AWS_ACCOUNT_NAME}.${env:AWS_REGION}.iam_kms_permissions.kms_keys}"
   },
-]
+],
+custom_config = {
+  "retryLambdaServiceFailure": [
+    {
+      "ErrorEquals": [
+        "Lambda.ServiceException",
+        "Lambda.AWSLambdaException",
+        "Lambda.SdkClientException"
+      ],
+      "IntervalSeconds": 2,
+      "MaxAttempts": 6,
+      "BackoffRate": 2
+    }
+  ],
+  "authorizer": {
+    "type": "CUSTOM",
+    "authorizerId": "!ImportValue ApiGatewayAuthorizerId-${env:DEPLOY_TAG}"
+  },
+  "aws": {
+    "tags": "${file(serverless_global_config.yml):tags}",
+    "KmsMasterKeyId": "${file(serverless_global_config.yml):common.kms.key.${env:AWS_ACCOUNT_NAME}}"
+  }
+},
+s3_cleaner_bucket_names = ['test-bucket-to-clean'],
+import_gateway={
+        "importApiGateway": {
+            "name": "${env:AWS_ACCOUNT_NAME_ABBREVIATION}-${env:DEPLOY_TAG}",
+            "path": "/",
+            "resources": ["/v3"],
+        }
+    },
 )
