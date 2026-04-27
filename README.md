@@ -163,3 +163,7 @@ A collection of data analysis challenges completed as part of the UT Data Visual
 ### Budgeting App (`aws/budgeting_app`)
 
 AWS serverless budgeting application. Uses the custom Serverless Pants plugin for deployment. Includes Lambda ingest functions and S3 resource definitions.
+
+#### To start Postgress
+
+Read: https://dev.to/uponthesky/postgresql-installing-postgresql-through-homebrew-on-macos-388h
