@@ -9,9 +9,15 @@ Personal monorepo to organise and test projects, built with [Pants](https://www.
 ```
 projects/
 ├── apps/
+│   ├── boa_ingestor/           # Bank of America CSV → PostgreSQL ingestor
 │   └── chase_cc_ingestor/      # Chase credit card CSV → PostgreSQL ingestor
 ├── aws/                        # AWS serverless applications
 │   └── budgeting_app/          # Budgeting app (Lambda + S3 resources)
+├── dbt_project/                # dbt project for the expense tracker data warehouse
+│   ├── macros/                 # Custom macros (e.g. generate_schema_name)
+│   └── models/
+│       ├── bronze/             # Deduplicated raw source tables (Chase, BoA)
+│       └── staging/            # dbt source definitions and column tests
 ├── pants-plugins/
 │   └── serverless/             # Custom Pants plugin for Serverless Framework deployments
 │       └── plugin/
@@ -30,6 +36,7 @@ projects/
 │           └── challenge_api/       # WeatherPy & VacationPy (external APIs)
 ├── internal/
 │   └── pre_commit_hooks/       # Custom pre-commit hook scripts
+├── dbt_project.yml             # dbt project configuration
 ├── Makefile                    # Dev environment bootstrap
 ├── pants.toml                  # Pants configuration
 ├── pyproject.toml              # Python tooling config (ruff, mypy)
