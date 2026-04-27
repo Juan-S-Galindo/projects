@@ -180,3 +180,4 @@ cython_debug/
 
 # Ignore personal data
 apps/chase_cc_ingestor/statements/*.csv
+apps/boa_ingestor/statements/**/*.csv
