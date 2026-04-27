@@ -179,4 +179,4 @@ cython_debug/
 /dist/
 
 # Ignore personal data
-apps/chase_cc_ingestor/statements/
+apps/chase_cc_ingestor/statements/*.csv

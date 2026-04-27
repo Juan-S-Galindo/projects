@@ -4,7 +4,7 @@ Reads connection parameters from environment variables:
   PGHOST       — hostname (required)
   PGPORT       — port (default: 5432)
   PGUSER       — username (required)
-  PGPASSWORD   — password (required)
+  PGPASSWORD   — password (optional)
   PGDATABASE   — target database name (default: expenses)
 
 On startup:
@@ -27,7 +27,7 @@ def _connection_params(database: str) -> dict:
         "host": os.environ["PGHOST"],
         "port": int(os.environ.get("PGPORT", 5432)),
         "user": os.environ["PGUSER"],
-        "password": os.environ["PGPASSWORD"],
+        "password": os.environ.get("PGPASSWORD") or None,
         "database": database,
     }
 
