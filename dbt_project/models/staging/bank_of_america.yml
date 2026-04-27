@@ -1,0 +1,35 @@
+version: 2
+
+sources:
+  - name: bank_of_america_transactions
+    database: expenses
+    schema: staging
+    tables:
+      - name: bank_of_america_transactions
+        description: "Raw Bank of America checking account transactions loaded by the boa_ingestor app."
+        columns:
+          - name: id
+            description: "Surrogate primary key assigned by the ingestor (SERIAL)."
+            tests:
+              - unique
+              - not_null
+          - name: transaction_date
+            description: "Date the transaction occurred."
+            tests:
+              - not_null
+          - name: description
+            description: "Merchant name or transaction description as provided by Bank of America."
+            tests:
+              - not_null
+          - name: amount
+            description: "Transaction amount in USD. Negative values are debits; positive values are credits or deposits."
+          - name: running_balance
+            description: "Account balance after the transaction was applied."
+          - name: source
+            description: "Statement file the row was ingested from (e.g. 'main' or 'bills')."
+            tests:
+              - not_null
+          - name: ingested_at
+            description: "Timestamp (with time zone) when the row was inserted by the ingestor."
+            tests:
+              - not_null

@@ -1,0 +1,41 @@
+version: 2
+
+sources:
+  - name: chase_transactions
+    database: expenses
+    schema: staging
+    tables:
+      - name: chase_transactions
+        description: "Raw Chase credit card transactions loaded by the chase_cc_ingestor app."
+        columns:
+          - name: id
+            description: "Surrogate primary key assigned by the ingestor (SERIAL)."
+            tests:
+              - unique
+              - not_null
+          - name: transaction_date
+            description: "Date the transaction occurred."
+            tests:
+              - not_null
+          - name: post_date
+            description: "Date the transaction posted to the account."
+            tests:
+              - not_null
+          - name: description
+            description: "Merchant name or transaction description as provided by Chase."
+            tests:
+              - not_null
+          - name: category
+            description: "Spending category assigned by Chase (e.g. Food & Drink, Shopping, Automotive)."
+          - name: type
+            description: "Transaction type as reported by Chase (e.g. Sale, Payment, Adjustment)."
+          - name: amount
+            description: "Transaction amount in USD. Negative values are charges; positive values are payments or credits."
+            tests:
+              - not_null
+          - name: memo
+            description: "Optional memo field included in the Chase CSV export."
+          - name: ingested_at
+            description: "Timestamp (with time zone) when the row was inserted by the ingestor."
+            tests:
+              - not_null
