@@ -44,9 +44,9 @@ interpreter_constraints = ["==3.11.*"]
 # https://www.pantsbuild.org/docs/python-third-party-dependencies. This also adds the
 # `generate-lockfiles` goal for Pants to generate the lockfile for you.
 enable_resolves = true
-default_resolve = "lambdas"
+default_resolve = "project"
 
-resolves = { lambdas = "requirements.lock"}
+resolves = { project = "requirements.lock"}
 
 [python-bootstrap]
 # We search for interpreters both on the $PATH and in the `$(pyenv root)/versions` folder.
