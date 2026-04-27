@@ -176,7 +176,3 @@ pants run apps/chase_cc_ingestor:chase_cc_ingestor
 ```
 
 See [apps/chase_cc_ingestor/README.md](apps/chase_cc_ingestor/README.md) for full setup instructions.
-
-### Budgeting App (`aws/budgeting_app`)
-
-AWS serverless budgeting application. Uses the custom Serverless Pants plugin for deployment. Includes Lambda ingest functions and S3 resource definitions.
