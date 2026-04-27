@@ -1,6 +1,6 @@
 with source as (
 
-    select * from {{ ref('chase_transactions') }}
+    select * from {{ source('chase_transactions', 'chase_transactions') }}
 
 ),
 
