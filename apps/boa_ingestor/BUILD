@@ -1,6 +1,9 @@
 python_sources(
     name="lib",
-    dependencies=["apps/boa_ingestor/statements:files"],
+    dependencies=[
+        "apps/boa_ingestor/statements/bills:files",
+        "apps/boa_ingestor/statements/main:files"
+        ],
 )
 
 pex_binary(
