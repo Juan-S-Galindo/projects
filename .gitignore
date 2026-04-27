@@ -187,3 +187,4 @@ apps/boa_ingestor/statements/**/*.csv
 dbt_project/target/
 dbt_project/dbt_packages/
 dbt_project/logs/
+dbt_project/seeds/
