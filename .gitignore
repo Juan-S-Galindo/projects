@@ -177,3 +177,6 @@ cython_debug/
 # Pants workspace files
 /.pants.d
 /dist/
+
+# Ignore personal data
+apps/chase_cc_ingestor/statements/*.csv

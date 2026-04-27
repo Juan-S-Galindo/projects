@@ -8,6 +8,8 @@ Personal monorepo to organise and test projects, built with [Pants](https://www.
 
 ```
 projects/
+├── apps/
+│   └── chase_cc_ingestor/      # Chase credit card CSV → PostgreSQL ingestor
 ├── aws/                        # AWS serverless applications
 │   └── budgeting_app/          # Budgeting app (Lambda + S3 resources)
 ├── pants-plugins/
@@ -89,7 +91,7 @@ This installs the following Homebrew packages automatically:
 | `jq` | JSON processing |
 | `pre-commit` | Git hooks |
 | `python@3.11` | Python runtime |
-| `postgresql@14` | PostgreSQL |
+| `postgresql@18` | PostgreSQL |
 | `docker` *(cask)* | Container runtime |
 | `mongodb-compass` *(cask)* | MongoDB GUI |
 
@@ -160,6 +162,17 @@ A collection of data analysis challenges completed as part of the UT Data Visual
 | `challenge_sqlalchemy` | **Hawaii climate** analysis with SQLAlchemy ORM + Flask REST API |
 | `challenge_api` | **WeatherPy** (OpenWeatherMap) and **VacationPy** (Geoapify) using external APIs |
 
-### Budgeting App (`aws/budgeting_app`)
+### Chase Credit Card Ingestor (`apps/chase_cc_ingestor`)
 
-AWS serverless budgeting application. Uses the custom Serverless Pants plugin for deployment. Includes Lambda ingest functions and S3 resource definitions.
+Ingests Chase credit card CSV exports into a local PostgreSQL `expenses` database. Drop CSV statements into `apps/chase_cc_ingestor/statements/` and run:
+
+```shell
+brew services start postgresql@18
+
+export PGHOST=localhost
+export PGUSER=$(whoami)
+
+pants run apps/chase_cc_ingestor:chase_cc_ingestor
+```
+
+See [apps/chase_cc_ingestor/README.md](apps/chase_cc_ingestor/README.md) for full setup instructions.
