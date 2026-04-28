@@ -11,10 +11,12 @@ The first 6 rows (preamble + blank line) are skipped by scanning for the real
 header line.  Rows with a blank Amount field are also skipped.
 """
 
+import ast
 import csv
+import os
 from datetime import datetime
 from pathlib import Path
-from typing import List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import psycopg2.extensions
 
@@ -23,10 +25,30 @@ REAL_HEADER_FIRST_FIELD = "Date"
 
 INSERT_SQL = """
 INSERT INTO staging.bank_of_america_transactions
-    (transaction_date, description, amount, running_balance, source)
+    (transaction_date, description, amount, running_balance, source, bill_type)
 VALUES
-    (%s, %s, %s, %s, %s)
+    (%s, %s, %s, %s, %s, %s)
 """
+
+
+def _load_boa_mappings() -> Dict[str, str]:
+    """Parse BILL_MAPPINGS env var into a dict.
+
+    Returns empty dict if unset.
+    """
+    raw = os.environ.get("BILL_MAPPINGS", "").strip()
+    if not raw:
+        return {}
+    return ast.literal_eval(raw)
+
+
+def _resolve_bill_type(description: str, mappings: Dict[str, str]) -> Optional[str]:
+    """Return the bill type whose key appears in *description*, or None."""
+    description_lower = description.lower()
+    for key, bill_type in mappings.items():
+        if key.lower() in description_lower:
+            return bill_type
+    return None
 
 
 def _parse_date(value: str):
@@ -39,7 +61,7 @@ def _strip_commas(value: str) -> str:
     return value.replace(",", "")
 
 
-def _load_csv(csv_path: Path, source: str) -> List[Tuple]:
+def _load_csv(csv_path: Path, source: str, mappings: Dict[str, str]) -> List[Tuple]:
     """Parse *csv_path* and return a list of row tuples ready for insertion.
 
     Parameters
@@ -48,6 +70,8 @@ def _load_csv(csv_path: Path, source: str) -> List[Tuple]:
         Path to the BofA CSV export file.
     source:
         Account source tag — either ``"MAIN"`` or ``"BILLS"``.
+    mappings:
+        Description-to-bill-type lookup loaded from BOA_MAPPINGS.
     """
     rows: List[Tuple] = []
     with csv_path.open(newline="", encoding="utf-8-sig") as fh:
@@ -78,12 +102,14 @@ def _load_csv(csv_path: Path, source: str) -> List[Tuple]:
             running_bal_raw = row.get("Running Bal.", "").strip()
 
             try:
+                description = row["Description"].strip()
                 rows.append((
                     _parse_date(row["Date"]),
-                    row["Description"].strip(),
+                    description,
                     float(_strip_commas(amount_raw)),
                     float(_strip_commas(running_bal_raw)) if running_bal_raw else None,
                     source,
+                    _resolve_bill_type(description, mappings),
                 ))
             except (KeyError, ValueError) as exc:
                 raise ValueError(
@@ -111,7 +137,8 @@ def ingest(csv_path: Path, source: str, conn: psycopg2.extensions.connection) ->
     int
         Number of rows inserted.
     """
-    rows = _load_csv(csv_path, source)
+    mappings = _load_boa_mappings()
+    rows = _load_csv(csv_path, source, mappings)
     if not rows:
         print(f"  '{csv_path.name}': no data rows found. Nothing inserted.")
         return 0

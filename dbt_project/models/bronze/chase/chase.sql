@@ -34,6 +34,7 @@ filtered as (
         type,
         amount,
         memo,
+        bill_type,
         ingested_at
     from deduplicated
     where row_num = 1

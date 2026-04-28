@@ -14,6 +14,7 @@ deduplicated as (
                 description,
                 amount,
                 running_balance,
+                bill_type,
                 source
             order by ingested_at desc
         ) as row_num
@@ -31,6 +32,7 @@ filtered as (
         amount,
         running_balance,
         source,
+        bill_type,
         ingested_at
     from deduplicated
     where row_num = 1

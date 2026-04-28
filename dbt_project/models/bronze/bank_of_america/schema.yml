@@ -1,0 +1,41 @@
+version: 2
+
+models:
+  - name: bank_of_america
+    description: >
+      Deduplicated Bank of America checking account transactions sourced from the
+      raw staging table. A window function partitions on all meaningful business
+      columns and keeps only the most recently ingested record when duplicates
+      exist, ensuring each logical transaction appears exactly once.
+    columns:
+      - name: id
+        description: Surrogate primary key assigned by the ingestor.
+        tests:
+          - unique
+          - not_null
+      - name: transaction_date
+        description: Date the transaction occurred.
+        tests:
+          - not_null
+      - name: description
+        description: Merchant name or transaction description as provided by Bank of America.
+        tests:
+          - not_null
+      - name: amount
+        description: >
+          Transaction amount in USD. Negative values are debits; positive values
+          are credits or deposits.
+      - name: running_balance
+        description: Account balance after the transaction was applied.
+      - name: source
+        description: Statement file the row was ingested from (e.g. 'main' or 'bills').
+        tests:
+          - not_null
+      - name: bill_type
+        description: >
+          Category label for recurring bill transactions (e.g. streaming,
+          utilities, subscriptions). Null for non-bill transactions.
+      - name: ingested_at
+        description: Timestamp when the record was inserted into the raw staging table.
+        tests:
+          - not_null

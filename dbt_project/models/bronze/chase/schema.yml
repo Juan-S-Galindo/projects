@@ -1,0 +1,43 @@
+version: 2
+
+models:
+  - name: chase
+    description: >
+      Deduplicated Chase credit card transactions sourced from the raw staging
+      table. A window function partitions on all meaningful business columns and
+      keeps only the most recently ingested record when duplicates exist,
+      ensuring each logical transaction appears exactly once.
+    columns:
+      - name: id
+        description: Surrogate primary key assigned by the ingestor.
+        tests:
+          - unique
+          - not_null
+      - name: transaction_date
+        description: Date the transaction occurred.
+        tests:
+          - not_null
+      - name: post_date
+        description: Date the transaction posted to the account.
+        tests:
+          - not_null
+      - name: description
+        description: Merchant name or transaction description as provided by Chase.
+        tests:
+          - not_null
+      - name: category
+        description: Spending category assigned by Chase (e.g. Food & Drink, Shopping, Automotive).
+      - name: type
+        description: Transaction type as reported by Chase (e.g. Sale, Payment, Adjustment).
+      - name: amount
+        description: >
+          Transaction amount in USD. Negative values are charges; positive
+          values are payments or credits.
+        tests:
+          - not_null
+      - name: memo
+        description: Optional memo field included in the Chase CSV export.
+      - name: ingested_at
+        description: Timestamp when the record was inserted into the raw staging table.
+        tests:
+          - not_null
