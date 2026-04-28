@@ -76,8 +76,14 @@ CREATE TABLE IF NOT EXISTS staging.chase_transactions (
     type             TEXT,
     amount           NUMERIC(12,2) NOT NULL,
     memo             TEXT,
+    bill_type        TEXT,
     ingested_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW()
 )
+"""
+
+ADD_BILL_TYPE_COLUMN_SQL = """
+ALTER TABLE staging.chase_transactions
+    ADD COLUMN IF NOT EXISTS bill_type TEXT
 """
 
 
@@ -89,6 +95,7 @@ def ensure_schema_and_table() -> None:
             with conn.cursor() as cur:
                 cur.execute(CREATE_SCHEMA_SQL)
                 cur.execute(CREATE_TABLE_SQL)
+                cur.execute(ADD_BILL_TYPE_COLUMN_SQL)
         print("Schema and table are ready.")
     finally:
         conn.close()

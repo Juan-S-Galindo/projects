@@ -1,0 +1,88 @@
+version: 2
+
+models:
+  - name: chase_recurring_bills
+    description: >
+      Filters the deduplicated Chase bronze model to rows that have a non-null
+      bill_type, representing recurring bill transactions.
+    columns:
+      - name: id
+        description: Surrogate key from the bronze model.
+        tests:
+          - unique
+          - not_null
+      - name: transaction_date
+        description: Date the transaction was initiated.
+        tests:
+          - not_null
+      - name: post_date
+        description: Date the transaction was posted to the account.
+      - name: description
+        description: Merchant or transaction description.
+      - name: category
+        description: Chase-assigned transaction category.
+      - name: type
+        description: Transaction type as reported by Chase (e.g. Sale, Payment).
+      - name: amount
+        description: Transaction amount. Positive values are debits; negative values are credits/refunds.
+        tests:
+          - not_null
+      - name: memo
+        description: Optional memo field attached to the transaction.
+      - name: bill_type
+        description: Category label for the recurring bill (e.g. streaming, utilities, subscriptions).
+        tests:
+          - not_null
+      - name: ingested_at
+        description: Timestamp when the record was ingested into the raw table.
+
+  - name: chase_bills_by_type
+    description: >
+      Aggregates total spend by bill_type for the rolling 12-month window ending
+      today, rolled up from chase_recurring_bills. Materialized as a table in
+      the silver layer.
+    columns:
+      - name: bill_type
+        description: Recurring bill category. Matches bill_type in the upstream model.
+        tests:
+          - unique
+          - not_null
+      - name: total_amount
+        description: Sum of transaction amounts for this bill_type over the last 12 months.
+        tests:
+          - not_null
+      - name: transaction_count
+        description: Number of transactions contributing to total_amount.
+        tests:
+          - not_null
+      - name: earliest_transaction_date
+        description: Earliest transaction date included in the 12-month window for this bill_type.
+      - name: latest_transaction_date
+        description: Most recent transaction date included in the 12-month window for this bill_type.
+
+  - name: chase_bills_monthly_avg
+    description: >
+      Shows total and average spend per bill_type broken out by calendar month,
+      sourced from chase_recurring_bills. Useful for spotting month-over-month
+      changes in recurring bill costs. Materialized as a table in the silver layer.
+    columns:
+      - name: bill_type
+        description: Recurring bill category. Matches bill_type in the upstream model.
+        tests:
+          - not_null
+      - name: month
+        description: Calendar month the transactions belong to, truncated to the first day of the month.
+        tests:
+          - not_null
+      - name: total_amount
+        description: Sum of transaction amounts for this bill_type in the given month.
+        tests:
+          - not_null
+      - name: transaction_count
+        description: Number of transactions contributing to total_amount for this bill_type and month.
+        tests:
+          - not_null
+      - name: avg_amount_per_transaction
+        description: Average transaction amount for this bill_type in the given month (total_amount / transaction_count).
+        tests:
+          - not_null

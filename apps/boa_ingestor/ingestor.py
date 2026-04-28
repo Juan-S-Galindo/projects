@@ -32,11 +32,11 @@ VALUES
 
 
 def _load_boa_mappings() -> Dict[str, str]:
-    """Parse BOA_MAPPINGS env var into a dict.
+    """Parse BILL_MAPPINGS env var into a dict.
 
     Returns empty dict if unset.
     """
-    raw = os.environ.get("BOA_MAPPINGS", "").strip()
+    raw = os.environ.get("BILL_MAPPINGS", "").strip()
     if not raw:
         return {}
     return ast.literal_eval(raw)
