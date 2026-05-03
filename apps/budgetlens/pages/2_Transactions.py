@@ -150,16 +150,16 @@ if st.button("💾 Save Changes", type="primary"):
 
     try:
         with get_engine().begin() as conn:
-            # Category overrides
+            # Category overrides — update all transactions with the same description
             for i, (changed, new_cat) in enumerate(zip(cat_changed, new_cats)):
                 if changed:
                     conn.execute(
                         text("""
                             UPDATE budgetlens.transactions
                             SET category = :cat, category_overridden = TRUE
-                            WHERE id = :id
+                            WHERE description = :desc
                         """),
-                        {"cat": new_cat, "id": str(df.iloc[i]["id"])},
+                        {"cat": new_cat, "desc": df.iloc[i]["description"]},
                     )
 
             # Unlink bills (uncheck)
