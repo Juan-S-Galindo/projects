@@ -124,7 +124,20 @@ $$;
 """
 
 
+INCOME_MIGRATION = """
+ALTER TABLE budgetlens.income_transaction_rules
+    ADD COLUMN IF NOT EXISTS name_override   TEXT,
+    ADD COLUMN IF NOT EXISTS cadence         VARCHAR(20),
+    ADD COLUMN IF NOT EXISTS amount_override NUMERIC(12,2);
+
+CREATE TABLE IF NOT EXISTS budgetlens.income_excluded_hashes (
+    content_hash VARCHAR(64) PRIMARY KEY
+);
+"""
+
+
 def init_schema():
     execute(DDL)
     execute(DROP_UNIQUE)
     execute(DEDUP_VIEW)
+    execute(INCOME_MIGRATION)
