@@ -192,6 +192,21 @@ if st.button("💾 Save Changes", type="primary"):
         if msgs:
             st.success(" · ".join(msgs))
 
+        # Remove newly-unbilled rows from the pending configure section
+        if newly_unbilled and "pending_bill_rows" in st.session_state:
+            unbilled_hashes = {df.iloc[i]["content_hash"] for i in newly_unbilled}
+            snapshot = st.session_state.get("pending_bill_df_snapshot", pd.DataFrame())
+            remaining = [
+                j for j in st.session_state["pending_bill_rows"]
+                if not snapshot.empty
+                and snapshot.iloc[j]["content_hash"] not in unbilled_hashes
+            ]
+            if remaining:
+                st.session_state["pending_bill_rows"] = remaining
+            else:
+                st.session_state.pop("pending_bill_rows", None)
+                st.session_state.pop("pending_bill_df_snapshot", None)
+
         # Store newly-billed row indices for the config form below
         if newly_billed:
             st.session_state["pending_bill_rows"] = newly_billed
