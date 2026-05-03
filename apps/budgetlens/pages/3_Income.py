@@ -1,10 +1,21 @@
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import re
 import streamlit as st
 import pandas as pd
 from sqlalchemy import text
 from src.db.connection import get_engine
+
+
+def _normalize_desc(desc: str) -> str:
+    """Extract the company/sender name from ACH-style descriptions.
+
+    'ACME CORP DES:PAYROLL ID:123 INDN:JOHN CO ID:456 PPD' -> 'ACME CORP'
+    Descriptions without a DES: token are returned as-is.
+    """
+    m = re.match(r"^(.*?)\s+DES:", desc, re.IGNORECASE)
+    return m.group(1).strip() if m else desc
 
 st.set_page_config(page_title="Income — BudgetLens", layout="wide")
 st.title("💰 Income")
@@ -109,11 +120,12 @@ if income_txns.empty:
     st.info("No income transactions found. Import transactions categorized as income to see sources here.")
 else:
     income_txns["included"] = ~income_txns["content_hash"].isin(excluded_set)
+    income_txns["normalized_desc"] = income_txns["description"].apply(_normalize_desc)
 
-    for idx, (desc, group) in enumerate(income_txns.groupby("description")):
+    for idx, (norm_desc, group) in enumerate(income_txns.groupby("normalized_desc")):
         group = group.reset_index(drop=True)
-        rule = rules.get(desc, {})
-        name = rule.get("name_override") or desc
+        rule = rules.get(norm_desc, {})
+        name = rule.get("name_override") or norm_desc
         cadence = rule.get("cadence") or default_cadence
         amount_override = rule.get("amount_override")
 
@@ -132,11 +144,12 @@ else:
         ):
             st.markdown("**Transactions** — uncheck to exclude from the average")
 
-            txn_display = group[["transaction_date", "amount", "included"]].copy()
+            txn_display = group[["transaction_date", "description", "amount", "included"]].copy()
             txn_display["transaction_date"] = txn_display["transaction_date"].astype(str)
             txn_display["amount"] = txn_display["amount"].astype(float)
             txn_display = txn_display.rename(columns={
                 "transaction_date": "Date",
+                "description": "Description",
                 "amount": "Amount ($)",
                 "included": "Include",
             })
@@ -145,6 +158,7 @@ else:
                 txn_display,
                 column_config={
                     "Date": st.column_config.TextColumn(disabled=True, width="small"),
+                    "Description": st.column_config.TextColumn(disabled=True, width="large"),
                     "Amount ($)": st.column_config.NumberColumn(
                         disabled=True, format="$%.2f", width="small"
                     ),
@@ -227,8 +241,8 @@ else:
                                     amount_override = EXCLUDED.amount_override
                             """),
                             {
-                                "desc": desc,
-                                "name": new_name if new_name != desc else None,
+                                "desc": norm_desc,
+                                "name": new_name if new_name != norm_desc else None,
                                 "cad":  new_src_cadence,
                                 "ovr":  new_override,
                             },
