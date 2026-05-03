@@ -54,14 +54,6 @@ with st.sidebar:
     selected_label = st.selectbox("Month", list(month_options.keys()))
     selected_month = month_options[selected_label]
     month_str = selected_month.strftime("%Y-%m")
-    st.markdown("---")
-    st.page_link("pages/1_Import.py", label="📥 Import CSV", icon=None)
-    st.page_link("pages/2_Transactions.py", label="📋 Transactions", icon=None)
-    st.page_link("pages/3_Income.py", label="💰 Income", icon=None)
-    st.page_link("pages/4_Bills.py", label="🧾 Bills", icon=None)
-    st.page_link("pages/5_Budget.py", label="📊 Budget", icon=None)
-    st.page_link("pages/6_Savings.py", label="🏦 Savings", icon=None)
-    st.page_link("pages/7_Reports.py", label="📈 Reports", icon=None)
 
 st.title(f"Dashboard — {selected_label}")
 
