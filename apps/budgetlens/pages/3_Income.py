@@ -207,14 +207,14 @@ else:
                             {"hashes": group_hashes},
                         )
                         newly_excluded = group.loc[~pd.Series(include_mask, index=group.index), "content_hash"].tolist()
-                        if newly_excluded:
+                        for h in newly_excluded:
                             conn.execute(
                                 text("""
                                     INSERT INTO budgetlens.income_excluded_hashes (content_hash)
-                                    SELECT unnest(:hashes::text[])
+                                    VALUES (:h)
                                     ON CONFLICT DO NOTHING
                                 """),
-                                {"hashes": newly_excluded},
+                                {"h": h},
                             )
                         conn.execute(
                             text("""
