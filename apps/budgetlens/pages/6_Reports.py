@@ -32,6 +32,7 @@ try:
                     SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END)       AS income
                 FROM budgetlens.transactions_deduped
                 WHERE transaction_date >= CURRENT_DATE - (:m * INTERVAL '1 month')
+                  AND category NOT IN ('transfer', 'credit_card_payment')
                 GROUP BY 1, 2
                 ORDER BY 1, 2
             """),
@@ -49,6 +50,7 @@ try:
                 FROM budgetlens.transactions_deduped
                 WHERE amount < 0
                   AND to_char(transaction_date, 'YYYY-MM') = :m
+                  AND category NOT IN ('transfer', 'credit_card_payment')
                 GROUP BY category
             """),
             conn,

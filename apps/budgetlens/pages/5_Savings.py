@@ -51,25 +51,11 @@ except Exception as e:
     st.error(f"Database error: {e}")
     st.stop()
 
-# ── Income setting ────────────────────────────────────────────────────────────
+# ── Income display ────────────────────────────────────────────────────────────
 
 st.subheader("Monthly Income")
-new_income = st.number_input(
-    "Estimated monthly take-home income ($)",
-    value=monthly_income,
-    min_value=0.0,
-    step=100.0,
-)
-if new_income != monthly_income:
-    try:
-        with get_engine().begin() as conn:
-            conn.execute(
-                text("UPDATE budgetlens.settings SET value = :v WHERE key = 'monthly_income_estimate'"),
-                {"v": str(new_income)},
-            )
-        monthly_income = new_income
-    except Exception as e:
-        st.error(f"Failed to save income: {e}")
+st.metric("Estimated Monthly Take-Home", f"${monthly_income:,.2f}")
+st.caption("Configure income sources and cadence on the **Income** page.")
 
 st.markdown("---")
 
