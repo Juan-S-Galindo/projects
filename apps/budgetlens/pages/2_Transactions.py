@@ -62,7 +62,7 @@ try:
             where.append("td.category = :cat")
             params["cat"] = cat_filter
         else:
-            where.append("td.category != 'transfer'")
+            where.append("td.category NOT IN ('transfer', 'credit_card_payment')")
         if search:
             where.append("LOWER(td.description) LIKE :search")
             params["search"] = f"%{search.lower()}%"

@@ -74,6 +74,8 @@ KEYWORD_RULES: list[tuple[list[str], str]] = [
     # Pets
     (["petco", "petsmart", "chewy", "vet", "animal hosp",
       "wildflower animal"], "pets"),
+    # Credit card payments
+    (["chase credit crd des", "chase credit card payment"], "credit_card_payment"),
     # Transfer / payments (check after mortgage/hoa)
     (["online scheduled transfer", "payment thank you", "autopay",
       "applecard gsbank", "zelle to", "venmo to", "transfer to",
@@ -89,7 +91,7 @@ ALL_CATEGORIES = [
     "medical", "shopping", "automotive", "travel", "transportation",
     "entertainment", "fitness", "education", "personal_care",
     "home_improvement", "pets", "gifts", "fees", "income",
-    "transfer", "uncategorized",
+    "transfer", "credit_card_payment", "uncategorized",
 ]
 
 CATEGORY_LABELS = {
@@ -118,6 +120,7 @@ CATEGORY_LABELS = {
     "fees": "Fees",
     "income": "Income",
     "transfer": "Transfer",
+    "credit_card_payment": "Credit Card Payment",
     "uncategorized": "Uncategorized",
 }
 
