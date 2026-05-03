@@ -71,8 +71,26 @@ CREATE TABLE IF NOT EXISTS budgetlens.settings (
 INSERT INTO budgetlens.settings (key, value) VALUES
     ('monthly_income_estimate', '0'),
     ('alert_threshold_percent', '80'),
-    ('due_soon_days_threshold', '5')
+    ('due_soon_days_threshold', '5'),
+    ('pay_cadence', 'semi_monthly')
 ON CONFLICT (key) DO NOTHING;
+
+-- Marks which transaction descriptions count as regular income.
+-- Descriptions not present here are treated as regular (default TRUE).
+CREATE TABLE IF NOT EXISTS budgetlens.income_transaction_rules (
+    description TEXT PRIMARY KEY,
+    is_regular  BOOLEAN NOT NULL DEFAULT TRUE
+);
+
+-- Manual income sources not derived from transactions.
+CREATE TABLE IF NOT EXISTS budgetlens.income_sources (
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name       TEXT          NOT NULL,
+    amount     NUMERIC(12,2) NOT NULL,
+    cadence    VARCHAR(20)   NOT NULL,
+    active     BOOLEAN       NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+);
 """
 
 # Deduplication view: for each unique content_hash keep the most recently
