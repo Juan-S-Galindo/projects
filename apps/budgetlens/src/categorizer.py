@@ -91,7 +91,7 @@ ALL_CATEGORIES = [
     "medical", "shopping", "automotive", "travel", "transportation",
     "entertainment", "fitness", "education", "personal_care",
     "home_improvement", "pets", "gifts", "fees", "income",
-    "transfer", "credit_card_payment", "uncategorized",
+    "transfer", "credit_card_payment", "deposit", "uncategorized",
 ]
 
 CATEGORY_LABELS = {
@@ -121,6 +121,7 @@ CATEGORY_LABELS = {
     "income": "Income",
     "transfer": "Transfer",
     "credit_card_payment": "Credit Card Payment",
+    "deposit": "Deposit",
     "uncategorized": "Uncategorized",
 }
 
