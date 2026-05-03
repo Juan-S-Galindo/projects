@@ -214,41 +214,64 @@ if pending:
 
     for i in pending:
         row = pending_df.iloc[i]
-        amt = abs(float(row["amount"]))
         desc = row["description"]
         t_date = row["transaction_date"]
         if hasattr(t_date, "date"):
             t_date = t_date.date()
 
-        with st.expander(f"🧾 {desc}  —  ${amt:,.2f}", expanded=True):
-            with st.form(f"bill_form_{i}"):
-                c1, c2, c3 = st.columns(3)
-                with c1:
-                    bill_name = st.text_input("Bill name", value=desc[:50], key=f"bname_{i}")
-                with c2:
-                    freq = st.selectbox(
-                        "Frequency",
-                        list(FREQUENCY_CONFIG.keys()),
-                        format_func=lambda f: FREQUENCY_LABELS[f],
-                        key=f"bfreq_{i}",
-                    )
-                with c3:
-                    bill_cat = st.selectbox(
-                        "Category",
-                        ALL_CATEGORIES,
-                        format_func=lambda c: CATEGORY_LABELS.get(c, c),
-                        index=ALL_CATEGORIES.index(row["category"])
-                        if row["category"] in ALL_CATEGORIES else 0,
-                        key=f"bcat_{i}",
-                    )
+        # Average amount across all matching transactions in the last 12 months
+        try:
+            with get_engine().connect() as conn:
+                avg_row = conn.execute(
+                    text("""
+                        SELECT AVG(ABS(amount)) AS avg_amount, COUNT(*) AS occurrences
+                        FROM budgetlens.transactions_deduped
+                        WHERE description = :desc
+                          AND amount < 0
+                          AND transaction_date >= CURRENT_DATE - INTERVAL '12 months'
+                    """),
+                    {"desc": desc},
+                ).fetchone()
+            avg_amt = float(avg_row[0]) if avg_row and avg_row[0] else abs(float(row["amount"]))
+            occurrences = int(avg_row[1]) if avg_row and avg_row[1] else 1
+        except Exception:
+            avg_amt = abs(float(row["amount"]))
+            occurrences = 1
 
-                me = monthly_equivalent(amt, freq)
-                st.info(f"Monthly equivalent: **${me:,.2f}/month**")
-                submitted = st.form_submit_button("✅ Create Bill", type="primary")
+        occ_label = f"{occurrences} charge(s) in last 12 months · avg ${avg_amt:,.2f}"
+        with st.expander(f"🧾 {desc}  —  {occ_label}", expanded=True):
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                bill_name = st.text_input("Bill name", value=desc[:50], key=f"bname_{i}")
+            with c2:
+                freq = st.selectbox(
+                    "Frequency",
+                    list(FREQUENCY_CONFIG.keys()),
+                    format_func=lambda f: FREQUENCY_LABELS[f],
+                    key=f"bfreq_{i}",
+                )
+            with c3:
+                bill_cat = st.selectbox(
+                    "Category",
+                    ALL_CATEGORIES,
+                    format_func=lambda c: CATEGORY_LABELS.get(c, c),
+                    index=ALL_CATEGORIES.index(row["category"])
+                    if row["category"] in ALL_CATEGORIES else 0,
+                    key=f"bcat_{i}",
+                )
 
-            if submitted:
+            bill_amt = st.number_input(
+                "Amount per charge ($)",
+                value=round(avg_amt, 2),
+                min_value=0.01,
+                key=f"bamt_{i}",
+            )
+
+            me = monthly_equivalent(bill_amt, freq)
+            st.info(f"Monthly equivalent: **${me:,.2f}/month**")
+
+            if st.button("✅ Create Bill", type="primary", key=f"bsubmit_{i}"):
                 ncd = next_charge_date(t_date, freq)
-                content_hash = row["content_hash"]
                 try:
                     with get_engine().begin() as conn:
                         result = conn.execute(
@@ -260,31 +283,34 @@ if pending:
                                 RETURNING id
                             """),
                             {"name": bill_name, "cat": bill_cat, "freq": freq,
-                             "amt": amt, "me": me, "sd": t_date, "lcd": t_date, "ncd": ncd},
+                             "amt": bill_amt, "me": me, "sd": t_date, "lcd": t_date, "ncd": ncd},
                         )
                         bill_id = str(result.fetchone()[0])
 
-                        # Link ALL staging rows with this content_hash
+                        # Link ALL transactions with matching description
                         conn.execute(
                             text("""
                                 UPDATE budgetlens.transactions
                                 SET bill_id = :bid
-                                WHERE content_hash = :hash
+                                WHERE description = :desc
                             """),
-                            {"bid": bill_id, "hash": content_hash},
+                            {"bid": bill_id, "desc": desc},
                         )
-                        conn.execute(
+                        linked = conn.execute(
                             text("""
                                 INSERT INTO budgetlens.bill_transactions (bill_id, transaction_id)
                                 SELECT :bid, id
                                 FROM budgetlens.transactions
-                                WHERE content_hash = :hash
+                                WHERE description = :desc
                                 ON CONFLICT DO NOTHING
                             """),
-                            {"bid": bill_id, "hash": content_hash},
-                        )
+                            {"bid": bill_id, "desc": desc},
+                        ).rowcount
 
-                    st.success(f"Bill **{bill_name}** created — ${me:,.2f}/month")
+                    st.success(
+                        f"Bill **{bill_name}** created — ${me:,.2f}/month "
+                        f"({linked} transaction(s) linked)"
+                    )
                     remaining = [x for x in st.session_state["pending_bill_rows"] if x != i]
                     st.session_state["pending_bill_rows"] = remaining
                     if not remaining:
