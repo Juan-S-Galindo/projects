@@ -61,6 +61,8 @@ try:
         if cat_filter:
             where.append("td.category = :cat")
             params["cat"] = cat_filter
+        else:
+            where.append("td.category != 'transfer'")
         if search:
             where.append("LOWER(td.description) LIKE :search")
             params["search"] = f"%{search.lower()}%"
