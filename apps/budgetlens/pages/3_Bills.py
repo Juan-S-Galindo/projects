@@ -202,6 +202,7 @@ with a2:
     frequency = st.selectbox(
         "Frequency",
         list(FREQUENCY_CONFIG.keys()),
+        index=1,
         format_func=lambda f: FREQUENCY_LABELS[f],
         key="add_frequency",
     )

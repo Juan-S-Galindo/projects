@@ -247,6 +247,7 @@ if pending:
                 freq = st.selectbox(
                     "Frequency",
                     list(FREQUENCY_CONFIG.keys()),
+                    index=1,
                     format_func=lambda f: FREQUENCY_LABELS[f],
                     key=f"bfreq_{i}",
                 )
