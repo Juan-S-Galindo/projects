@@ -77,7 +77,8 @@ KEYWORD_RULES: list[tuple[list[str], str]] = [
     # Credit card payments
     (["chase credit crd des", "chase credit card payment"], "credit_card_payment"),
     # Transfer / payments (check after mortgage/hoa)
-    (["online scheduled transfer", "payment thank you", "autopay",
+    (["online scheduled transfer", "online banking transfer from",
+      "payment thank you", "autopay",
       "applecard gsbank", "zelle to", "venmo to", "transfer to",
       "overdraft protection"], "transfer"),
     # Income (specific deposit types only — generic "deposit" handled below)
