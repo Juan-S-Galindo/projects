@@ -7,7 +7,7 @@ from datetime import date
 from sqlalchemy import text
 from src.db.connection import get_engine
 from src.categorizer import ALL_CATEGORIES, CATEGORY_LABELS
-from src.bill_calculator import FREQUENCY_LABELS, FREQUENCY_CONFIG, monthly_equivalent, next_charge_date
+from src.bill_calculator import PERIOD_UNITS, monthly_equivalent, next_charge_date
 
 st.set_page_config(page_title="Transactions — BudgetLens", layout="wide")
 st.title("📋 Transactions")
@@ -261,13 +261,17 @@ if pending:
             with c1:
                 bill_name = st.text_input("Bill name", value=desc[:50], key=f"bname_{i}")
             with c2:
-                freq = st.selectbox(
-                    "Frequency",
-                    list(FREQUENCY_CONFIG.keys()),
-                    index=1,
-                    format_func=lambda f: FREQUENCY_LABELS[f],
-                    key=f"bfreq_{i}",
-                )
+                bc1, bc2 = st.columns(2)
+                with bc1:
+                    bill_count = st.number_input("Every", value=1, min_value=1, step=1, key=f"bcnt_{i}")
+                with bc2:
+                    bill_unit = st.selectbox(
+                        "Period",
+                        list(PERIOD_UNITS.keys()),
+                        index=1,
+                        format_func=lambda u: PERIOD_UNITS[u],
+                        key=f"bunit_{i}",
+                    )
             with c3:
                 bill_cat = st.selectbox(
                     "Category",
@@ -285,23 +289,24 @@ if pending:
                 key=f"bamt_{i}",
             )
 
-            me = monthly_equivalent(bill_amt, freq)
+            me = monthly_equivalent(bill_amt, bill_unit, bill_count)
             st.info(f"Monthly equivalent: **${me:,.2f}/month**")
 
             if st.button("✅ Create Bill", type="primary", key=f"bsubmit_{i}"):
-                ncd = next_charge_date(t_date, freq)
+                ncd = next_charge_date(t_date, bill_unit, bill_count)
                 try:
                     with get_engine().begin() as conn:
                         result = conn.execute(
                             text("""
                                 INSERT INTO budgetlens.bills
-                                    (name, category, frequency, amount, monthly_equivalent,
-                                     start_date, last_charge_date, next_charge_date)
-                                VALUES (:name, :cat, :freq, :amt, :me, :sd, :lcd, :ncd)
+                                    (name, category, frequency, frequency_count, amount,
+                                     monthly_equivalent, start_date, last_charge_date, next_charge_date)
+                                VALUES (:name, :cat, :unit, :cnt, :amt, :me, :sd, :lcd, :ncd)
                                 RETURNING id
                             """),
-                            {"name": bill_name, "cat": bill_cat, "freq": freq,
-                             "amt": bill_amt, "me": me, "sd": t_date, "lcd": t_date, "ncd": ncd},
+                            {"name": bill_name, "cat": bill_cat, "unit": bill_unit,
+                             "cnt": bill_count, "amt": bill_amt, "me": me,
+                             "sd": t_date, "lcd": t_date, "ncd": ncd},
                         )
                         bill_id = str(result.fetchone()[0])
 

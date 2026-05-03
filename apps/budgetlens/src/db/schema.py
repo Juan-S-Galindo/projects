@@ -124,6 +124,17 @@ $$;
 """
 
 
+FREQUENCY_MIGRATION = """
+ALTER TABLE budgetlens.bills ADD COLUMN IF NOT EXISTS frequency_count INTEGER NOT NULL DEFAULT 1;
+
+UPDATE budgetlens.bills SET frequency = 'weeks',  frequency_count = 1  WHERE frequency = 'weekly';
+UPDATE budgetlens.bills SET frequency = 'months', frequency_count = 1  WHERE frequency = 'monthly';
+UPDATE budgetlens.bills SET frequency = 'months', frequency_count = 2  WHERE frequency = 'every_2_months';
+UPDATE budgetlens.bills SET frequency = 'months', frequency_count = 3  WHERE frequency = 'quarterly';
+UPDATE budgetlens.bills SET frequency = 'months', frequency_count = 6  WHERE frequency = 'every_6_months';
+UPDATE budgetlens.bills SET frequency = 'years',  frequency_count = 1  WHERE frequency = 'yearly';
+"""
+
 INCOME_MIGRATION = """
 ALTER TABLE budgetlens.income_transaction_rules
     ADD COLUMN IF NOT EXISTS name_override   TEXT,
@@ -140,4 +151,5 @@ def init_schema():
     execute(DDL)
     execute(DROP_UNIQUE)
     execute(DEDUP_VIEW)
+    execute(FREQUENCY_MIGRATION)
     execute(INCOME_MIGRATION)
