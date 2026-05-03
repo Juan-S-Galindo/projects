@@ -57,10 +57,11 @@ with st.sidebar:
     st.markdown("---")
     st.page_link("pages/1_Import.py", label="📥 Import CSV", icon=None)
     st.page_link("pages/2_Transactions.py", label="📋 Transactions", icon=None)
-    st.page_link("pages/3_Bills.py", label="🧾 Bills", icon=None)
-    st.page_link("pages/4_Budget.py", label="📊 Budget", icon=None)
-    st.page_link("pages/5_Savings.py", label="🏦 Savings", icon=None)
-    st.page_link("pages/6_Reports.py", label="📈 Reports", icon=None)
+    st.page_link("pages/3_Income.py", label="💰 Income", icon=None)
+    st.page_link("pages/4_Bills.py", label="🧾 Bills", icon=None)
+    st.page_link("pages/5_Budget.py", label="📊 Budget", icon=None)
+    st.page_link("pages/6_Savings.py", label="🏦 Savings", icon=None)
+    st.page_link("pages/7_Reports.py", label="📈 Reports", icon=None)
 
 st.title(f"Dashboard — {selected_label}")
 
