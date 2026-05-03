@@ -3,6 +3,8 @@ from .connection import execute
 DDL = """
 CREATE SCHEMA IF NOT EXISTS budgetlens;
 
+-- Staging table: append-only, every import adds rows regardless of duplicates.
+-- content_hash is stored for the dedup view but has no UNIQUE constraint here.
 CREATE TABLE IF NOT EXISTS budgetlens.transactions (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     source               VARCHAR(10)   NOT NULL,
@@ -18,7 +20,7 @@ CREATE TABLE IF NOT EXISTS budgetlens.transactions (
     running_balance      NUMERIC(12,2),
     bill_id              UUID,
     imported_at          TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
-    content_hash         VARCHAR(64)   UNIQUE
+    content_hash         VARCHAR(64)
 );
 
 CREATE TABLE IF NOT EXISTS budgetlens.bills (
@@ -73,6 +75,38 @@ INSERT INTO budgetlens.settings (key, value) VALUES
 ON CONFLICT (key) DO NOTHING;
 """
 
+# Deduplication view: for each unique content_hash keep the most recently
+# imported row.  All app read-queries use this view; writes always go to the
+# raw transactions table.
+DEDUP_VIEW = """
+CREATE OR REPLACE VIEW budgetlens.transactions_deduped AS
+SELECT DISTINCT ON (content_hash)
+    id, source, transaction_date, post_date, description, original_description,
+    category, category_overridden, transaction_type, amount, memo,
+    running_balance, bill_id, imported_at, content_hash
+FROM budgetlens.transactions
+ORDER BY content_hash, imported_at DESC;
+"""
+
+# If the database was created before this change, the UNIQUE constraint on
+# content_hash may still exist.  Drop it so re-imports no longer error.
+DROP_UNIQUE = """
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'transactions_content_hash_key'
+          AND conrelid = 'budgetlens.transactions'::regclass
+    ) THEN
+        ALTER TABLE budgetlens.transactions
+            DROP CONSTRAINT transactions_content_hash_key;
+    END IF;
+END
+$$;
+"""
+
 
 def init_schema():
     execute(DDL)
+    execute(DROP_UNIQUE)
+    execute(DEDUP_VIEW)

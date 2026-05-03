@@ -13,11 +13,6 @@ def _compute_hash(row: pd.Series) -> str:
     return hashlib.sha256(key.encode()).hexdigest()
 
 
-def _fetch_existing_hashes(conn) -> set[str]:
-    result = conn.execute(text("SELECT content_hash FROM budgetlens.transactions WHERE content_hash IS NOT NULL"))
-    return {row[0] for row in result}
-
-
 def parse_file(file_bytes: bytes) -> tuple[str, pd.DataFrame]:
     """Returns (source, dataframe) without touching the DB."""
     source = detect_format(file_bytes)
@@ -26,17 +21,29 @@ def parse_file(file_bytes: bytes) -> tuple[str, pd.DataFrame]:
     return source, df
 
 
+def count_already_in_staging(df: pd.DataFrame) -> int:
+    """How many rows from df already appear at least once in staging."""
+    hashes = df["content_hash"].tolist()
+    with get_engine().connect() as conn:
+        result = conn.execute(
+            text(
+                "SELECT COUNT(DISTINCT content_hash) FROM budgetlens.transactions "
+                "WHERE content_hash = ANY(:hashes)"
+            ),
+            {"hashes": hashes},
+        )
+        return int(result.scalar() or 0)
+
+
 def ingest(df: pd.DataFrame) -> dict[str, int]:
-    """Insert new-only rows (by content_hash) into budgetlens.transactions."""
-    engine = get_engine()
-    with engine.begin() as conn:
-        existing = _fetch_existing_hashes(conn)
-        new_df = df[~df["content_hash"].isin(existing)].copy()
+    """Append all rows to budgetlens.transactions (staging).
 
-        if new_df.empty:
-            return {"total": len(df), "imported": 0, "duplicates": len(df)}
-
-        rows = new_df.to_dict(orient="records")
+    Every upload is stored regardless of whether the same content_hash already
+    exists.  The transactions_deduped view surfaces only the most-recent version
+    of each transaction.
+    """
+    rows = df.to_dict(orient="records")
+    with get_engine().begin() as conn:
         conn.execute(
             text("""
                 INSERT INTO budgetlens.transactions
@@ -50,9 +57,4 @@ def ingest(df: pd.DataFrame) -> dict[str, int]:
             """),
             rows,
         )
-
-    return {
-        "total": len(df),
-        "imported": len(new_df),
-        "duplicates": len(df) - len(new_df),
-    }
+    return {"total": len(df), "imported": len(df)}

@@ -3,7 +3,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import streamlit as st
 import pandas as pd
-from src.ingestor.pipeline import parse_file, ingest
+from src.ingestor.pipeline import parse_file, ingest, count_already_in_staging
 from src.categorizer import ALL_CATEGORIES, CATEGORY_LABELS
 
 st.set_page_config(page_title="Import — BudgetLens", layout="wide")
@@ -11,17 +11,25 @@ st.title("📥 Import Bank CSV")
 
 st.markdown(
     "Upload a **Chase** or **Bank of America** CSV export. "
-    "The format is detected automatically."
+    "The format is detected automatically. "
+    "Re-uploading the same file is safe — the deduplication view always shows "
+    "the latest version of each transaction."
 )
 
+# Accept both .csv and .CSV (Streamlit's type filter is case-sensitive on some
+# platforms, so we accept all files and validate the extension ourselves).
 uploaded = st.file_uploader(
     "Drop your CSV file here or click to browse",
-    type=["csv"],
+    type=None,
     key="csv_uploader",
 )
 
 if uploaded is None:
     st.info("Supported formats: Chase credit card export · Bank of America checking export")
+    st.stop()
+
+if not uploaded.name.lower().endswith(".csv"):
+    st.error(f"Expected a .csv file, got: `{uploaded.name}`")
     st.stop()
 
 # ── Parse ──────────────────────────────────────────────────────────────────────
@@ -51,12 +59,9 @@ st.markdown(f"**{len(df)} transactions parsed** from `{uploaded.name}`")
 st.subheader("Preview & Category Override")
 st.caption("You can correct any auto-assigned categories before importing.")
 
-# Prepare display df
 display = df[["transaction_date", "description", "amount", "category"]].copy()
 display["transaction_date"] = display["transaction_date"].astype(str)
-display["category_label"] = display["category"].map(
-    lambda c: CATEGORY_LABELS.get(c, c)
-)
+display["category_label"] = display["category"].map(lambda c: CATEGORY_LABELS.get(c, c))
 
 category_options = {CATEGORY_LABELS.get(c, c): c for c in ALL_CATEGORIES}
 label_options = list(category_options.keys())
@@ -73,7 +78,7 @@ edited = st.data_editor(
         "Date": st.column_config.TextColumn(disabled=True, width="small"),
         "Description": st.column_config.TextColumn(disabled=True, width="large"),
         "Amount ($)": st.column_config.NumberColumn(disabled=True, format="$%.2f", width="small"),
-        "category_id": None,  # hide raw id column
+        "category_id": None,
         "Category": st.column_config.SelectboxColumn(
             "Category",
             options=label_options,
@@ -85,50 +90,36 @@ edited = st.data_editor(
     num_rows="fixed",
 )
 
-# Apply any overrides back to the pipeline df
 if edited is not None:
     new_cats = edited["Category"].map(category_options)
     df["category_overridden"] = new_cats.values != df["category"].values
     df["category"] = new_cats.values
 
-# ── Duplicate preview ─────────────────────────────────────────────────────────
+# ── Staging info (informational only — not blocking) ──────────────────────────
 
 try:
-    from sqlalchemy import text
-    from src.db.connection import get_engine
-    import hashlib
-
-    def _hash(row):
-        key = f"{row['source']}|{row['transaction_date']}|{row['description']}|{row['amount']}"
-        return hashlib.sha256(key.encode()).hexdigest()
-
-    df["content_hash"] = df.apply(_hash, axis=1)
-    with get_engine().connect() as conn:
-        existing = {
-            r[0] for r in conn.execute(
-                text("SELECT content_hash FROM budgetlens.transactions WHERE content_hash IS NOT NULL")
-            )
-        }
-    dupes = int(df["content_hash"].isin(existing).sum())
-    new_count = len(df) - dupes
-
-    if dupes > 0:
-        st.warning(f"⚠️ {dupes} duplicate transaction(s) already imported — they will be skipped.")
-    st.info(f"**{new_count} new transactions** will be imported.")
-
-except Exception as e:
-    st.warning(f"Could not check for duplicates: {e}")
-    new_count = len(df)
+    already = count_already_in_staging(df)
+    genuinely_new = len(df) - already
+    if already > 0:
+        st.info(
+            f"ℹ️ {already} of these transactions are already in staging "
+            f"(a new version will be added). "
+            f"{genuinely_new} are brand-new."
+        )
+    else:
+        st.info(f"**{len(df)} new transactions** ready to import.")
+except Exception:
+    pass  # DB might not be set up yet; non-blocking
 
 # ── Confirm import ─────────────────────────────────────────────────────────────
 
-if st.button("✅ Confirm Import", type="primary", disabled=(new_count == 0)):
+if st.button("✅ Confirm Import", type="primary"):
     with st.spinner("Importing…"):
         try:
             stats = ingest(df)
             st.success(
-                f"Imported **{stats['imported']}** transactions "
-                f"({stats['duplicates']} duplicates skipped)."
+                f"Imported **{stats['imported']}** transactions into staging. "
+                f"The deduplicated view has been updated automatically."
             )
         except Exception as e:
             st.error(f"Import failed: {e}")

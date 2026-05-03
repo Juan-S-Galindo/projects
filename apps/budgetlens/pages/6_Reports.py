@@ -30,7 +30,7 @@ try:
                     category,
                     SUM(CASE WHEN amount < 0 THEN ABS(amount) ELSE 0 END) AS spending,
                     SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END)       AS income
-                FROM budgetlens.transactions
+                FROM budgetlens.transactions_deduped
                 WHERE transaction_date >= CURRENT_DATE - (:m * INTERVAL '1 month')
                 GROUP BY 1, 2
                 ORDER BY 1, 2
@@ -46,7 +46,7 @@ try:
         this_month_df = pd.read_sql(
             text("""
                 SELECT category, SUM(ABS(amount)) as spent
-                FROM budgetlens.transactions
+                FROM budgetlens.transactions_deduped
                 WHERE amount < 0
                   AND to_char(transaction_date, 'YYYY-MM') = :m
                 GROUP BY category

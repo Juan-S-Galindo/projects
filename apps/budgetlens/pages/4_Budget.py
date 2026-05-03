@@ -25,7 +25,7 @@ try:
         spend_df = pd.read_sql(
             text("""
                 SELECT category, SUM(ABS(amount)) as spent
-                FROM budgetlens.transactions
+                FROM budgetlens.transactions_deduped
                 WHERE amount < 0
                   AND to_char(transaction_date, 'YYYY-MM') = :m
                 GROUP BY category

@@ -32,7 +32,7 @@ try:
                     SELECT category,
                            to_char(transaction_date, 'YYYY-MM') as month,
                            SUM(ABS(amount)) as monthly_total
-                    FROM budgetlens.transactions
+                    FROM budgetlens.transactions_deduped
                     WHERE amount < 0
                       AND transaction_date >= CURRENT_DATE - INTERVAL '3 months'
                       AND category NOT IN ('transfer', 'income', 'mortgage', 'hoa', 'rent')

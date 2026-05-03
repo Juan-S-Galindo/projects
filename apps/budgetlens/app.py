@@ -70,7 +70,7 @@ try:
     with get_engine().connect() as conn:
         txns = pd.read_sql(
             text("""
-                SELECT * FROM budgetlens.transactions
+                SELECT * FROM budgetlens.transactions_deduped
                 WHERE to_char(transaction_date, 'YYYY-MM') = :m
             """),
             conn,

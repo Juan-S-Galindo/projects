@@ -63,7 +63,7 @@ try:
         query = f"""
             SELECT id, source, transaction_date, description, category,
                    category_overridden, transaction_type, amount, bill_id
-            FROM budgetlens.transactions
+            FROM budgetlens.transactions_deduped
             WHERE {' AND '.join(where)}
             ORDER BY transaction_date DESC
             LIMIT 500
