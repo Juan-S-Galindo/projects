@@ -9,7 +9,13 @@ from .boa_parser import parse_boa
 
 
 def _compute_hash(row: pd.Series) -> str:
-    key = f"{row['source']}|{row['transaction_date']}|{row['description']}|{row['amount']}"
+    # row_index (position within the file) is included so that two genuinely
+    # identical transactions on the same day get distinct hashes while
+    # re-uploading the exact same file still produces the same hashes.
+    key = (
+        f"{row['source']}|{row['transaction_date']}|{row['description']}"
+        f"|{row['amount']}|{int(row['row_index'])}"
+    )
     return hashlib.sha256(key.encode()).hexdigest()
 
 
@@ -17,6 +23,8 @@ def parse_file(file_bytes: bytes) -> tuple[str, pd.DataFrame]:
     """Returns (source, dataframe) without touching the DB."""
     source = detect_format(file_bytes)
     df = parse_chase(file_bytes) if source == "chase" else parse_boa(file_bytes)
+    df = df.reset_index(drop=True)
+    df["row_index"] = df.index  # 0-based position within this file
     df["content_hash"] = df.apply(_compute_hash, axis=1)
     return source, df
 
