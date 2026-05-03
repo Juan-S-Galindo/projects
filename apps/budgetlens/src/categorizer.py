@@ -80,9 +80,11 @@ KEYWORD_RULES: list[tuple[list[str], str]] = [
     (["online scheduled transfer", "payment thank you", "autopay",
       "applecard gsbank", "zelle to", "venmo to", "transfer to",
       "overdraft protection"], "transfer"),
-    # Income
+    # Income (specific deposit types only — generic "deposit" handled below)
     (["payroll", "direct deposit", "ach deposit", "zelle from",
-      "venmo from", "deposit"], "income"),
+      "venmo from"], "income"),
+    # Deposits that are not income (transfers in, reimbursements, etc.)
+    (["deposit"], "deposit"),
 ]
 
 ALL_CATEGORIES = [
