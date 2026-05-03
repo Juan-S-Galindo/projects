@@ -128,77 +128,89 @@ if "editing_bill" in st.session_state and not bills.empty:
         b = row.iloc[0]
         st.markdown("---")
         st.subheader(f"Edit: {b['name']}")
-        with st.form("edit_bill_form"):
-            new_name = st.text_input("Name", value=b["name"])
-            new_cat = st.selectbox(
-                "Category",
-                ALL_CATEGORIES,
-                index=ALL_CATEGORIES.index(b["category"]) if b["category"] in ALL_CATEGORIES else 0,
-                format_func=lambda c: CATEGORY_LABELS.get(c, c),
-            )
+
+        new_name = st.text_input("Name", value=b["name"], key="edit_name")
+        new_cat = st.selectbox(
+            "Category",
+            ALL_CATEGORIES,
+            index=ALL_CATEGORIES.index(b["category"]) if b["category"] in ALL_CATEGORIES else 0,
+            format_func=lambda c: CATEGORY_LABELS.get(c, c),
+            key="edit_cat",
+        )
+        ec1, ec2 = st.columns(2)
+        with ec1:
             new_freq = st.selectbox(
                 "Frequency",
                 list(FREQUENCY_CONFIG.keys()),
                 index=list(FREQUENCY_CONFIG.keys()).index(b["frequency"]),
                 format_func=lambda f: FREQUENCY_LABELS[f],
+                key="edit_freq",
             )
-            new_amount = st.number_input("Amount ($)", value=float(b["amount"]), min_value=0.01)
-            new_active = st.checkbox("Active", value=bool(b["active"]))
-            new_notes = st.text_area("Notes", value=b["notes"] or "")
-            save = st.form_submit_button("Save Changes")
+        with ec2:
+            new_amount = st.number_input("Amount ($)", value=float(b["amount"]), min_value=0.01, key="edit_amount")
 
-        if save:
-            me = monthly_equivalent(new_amount, new_freq)
-            try:
-                with get_engine().begin() as conn:
-                    conn.execute(
-                        text("""
-                            UPDATE budgetlens.bills
-                            SET name = :name, category = :cat, frequency = :freq,
-                                amount = :amt, monthly_equivalent = :me,
-                                active = :active, notes = :notes
-                            WHERE id = :id
-                        """),
-                        {"name": new_name, "cat": new_cat, "freq": new_freq,
-                         "amt": new_amount, "me": me, "active": new_active,
-                         "notes": new_notes or None, "id": editing_id},
-                    )
+        me_preview = monthly_equivalent(new_amount, new_freq)
+        st.info(f"Monthly equivalent: **${me_preview:,.2f}/month**")
+
+        new_active = st.checkbox("Active", value=bool(b["active"]), key="edit_active")
+        new_notes = st.text_area("Notes", value=b["notes"] or "", key="edit_notes")
+
+        sc1, sc2 = st.columns([1, 4])
+        with sc1:
+            if st.button("Save Changes", type="primary", key="edit_save"):
+                try:
+                    with get_engine().begin() as conn:
+                        conn.execute(
+                            text("""
+                                UPDATE budgetlens.bills
+                                SET name = :name, category = :cat, frequency = :freq,
+                                    amount = :amt, monthly_equivalent = :me,
+                                    active = :active, notes = :notes
+                                WHERE id = :id
+                            """),
+                            {"name": new_name, "cat": new_cat, "freq": new_freq,
+                             "amt": new_amount, "me": me_preview, "active": new_active,
+                             "notes": new_notes or None, "id": editing_id},
+                        )
+                    del st.session_state["editing_bill"]
+                    st.success("Bill updated!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Save failed: {e}")
+        with sc2:
+            if st.button("Cancel", key="edit_cancel"):
                 del st.session_state["editing_bill"]
-                st.success("Bill updated!")
                 st.rerun()
-            except Exception as e:
-                st.error(f"Save failed: {e}")
 
 # ── Add new bill ───────────────────────────────────────────────────────────────
 
 st.markdown("---")
 st.subheader("Add New Bill")
 
-with st.form("add_bill_form"):
-    c1, c2 = st.columns(2)
-    with c1:
-        name = st.text_input("Bill name *", placeholder="e.g. Netflix")
-        amount = st.number_input("Amount ($) *", min_value=0.01, step=0.01)
-        start = st.date_input("First charge date *", value=today)
-    with c2:
-        category = st.selectbox(
-            "Category",
-            ALL_CATEGORIES,
-            format_func=lambda c: CATEGORY_LABELS.get(c, c),
-        )
-        frequency = st.selectbox(
-            "Frequency",
-            list(FREQUENCY_CONFIG.keys()),
-            format_func=lambda f: FREQUENCY_LABELS[f],
-        )
-        notes = st.text_input("Notes (optional)")
+a1, a2 = st.columns(2)
+with a1:
+    name = st.text_input("Bill name *", placeholder="e.g. Netflix", key="add_name")
+    amount = st.number_input("Amount ($) *", min_value=0.01, step=0.01, key="add_amount")
+    start = st.date_input("First charge date *", value=today, key="add_start")
+with a2:
+    category = st.selectbox(
+        "Category",
+        ALL_CATEGORIES,
+        format_func=lambda c: CATEGORY_LABELS.get(c, c),
+        key="add_category",
+    )
+    frequency = st.selectbox(
+        "Frequency",
+        list(FREQUENCY_CONFIG.keys()),
+        format_func=lambda f: FREQUENCY_LABELS[f],
+        key="add_frequency",
+    )
+    notes = st.text_input("Notes (optional)", key="add_notes")
 
-    me = monthly_equivalent(amount, frequency)
-    st.info(f"Monthly equivalent: **${me:,.2f}/month**")
+me = monthly_equivalent(amount, frequency)
+st.info(f"Monthly equivalent: **${me:,.2f}/month**")
 
-    submitted = st.form_submit_button("➕ Add Bill", type="primary")
-
-if submitted:
+if st.button("➕ Add Bill", type="primary", key="add_submit"):
     if not name:
         st.error("Bill name is required.")
     else:
