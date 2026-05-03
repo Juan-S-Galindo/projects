@@ -37,7 +37,7 @@ try:
                     transaction_date,
                     amount
                 FROM budgetlens.transactions_deduped
-                WHERE category = 'income'
+                WHERE category IN ('income', 'rent')
                   AND amount > 0
                 ORDER BY description, transaction_date DESC
             """),
