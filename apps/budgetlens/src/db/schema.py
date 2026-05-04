@@ -1,4 +1,4 @@
-from .connection import execute
+from sqlalchemy import text
 
 DDL = """
 CREATE SCHEMA IF NOT EXISTS budgetlens;
@@ -76,7 +76,6 @@ INSERT INTO budgetlens.settings (key, value) VALUES
 ON CONFLICT (key) DO NOTHING;
 
 -- Marks which transaction descriptions count as regular income.
--- Descriptions not present here are treated as regular (default TRUE).
 CREATE TABLE IF NOT EXISTS budgetlens.income_transaction_rules (
     description TEXT PRIMARY KEY,
     is_regular  BOOLEAN NOT NULL DEFAULT TRUE
@@ -93,9 +92,6 @@ CREATE TABLE IF NOT EXISTS budgetlens.income_sources (
 );
 """
 
-# Deduplication view: for each unique content_hash keep the most recently
-# imported row.  All app read-queries use this view; writes always go to the
-# raw transactions table.
 DEDUP_VIEW = """
 CREATE OR REPLACE VIEW budgetlens.transactions_deduped AS
 SELECT DISTINCT ON (content_hash)
@@ -106,8 +102,6 @@ FROM budgetlens.transactions
 ORDER BY content_hash, imported_at DESC;
 """
 
-# If the database was created before this change, the UNIQUE constraint on
-# content_hash may still exist.  Drop it so re-imports no longer error.
 DROP_UNIQUE = """
 DO $$
 BEGIN
@@ -122,7 +116,6 @@ BEGIN
 END
 $$;
 """
-
 
 FREQUENCY_MIGRATION = """
 ALTER TABLE budgetlens.bills ADD COLUMN IF NOT EXISTS frequency_count INTEGER NOT NULL DEFAULT 1;
@@ -144,12 +137,68 @@ ALTER TABLE budgetlens.income_transaction_rules
 CREATE TABLE IF NOT EXISTS budgetlens.income_excluded_hashes (
     content_hash VARCHAR(64) PRIMARY KEY
 );
+
+CREATE TABLE IF NOT EXISTS budgetlens.income_transaction_sources (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    alias           TEXT          NOT NULL,
+    filter_type     VARCHAR(20)   NOT NULL DEFAULT 'contains',
+    filter_value    TEXT          NOT NULL,
+    cadence         VARCHAR(20)   NOT NULL DEFAULT 'semi_monthly',
+    amount_override NUMERIC(12,2),
+    active          BOOLEAN       NOT NULL DEFAULT TRUE,
+    created_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS budgetlens.income_source_excluded_hashes (
+    source_id    UUID        NOT NULL REFERENCES budgetlens.income_transaction_sources(id) ON DELETE CASCADE,
+    content_hash VARCHAR(64) NOT NULL,
+    PRIMARY KEY (source_id, content_hash)
+);
+"""
+
+BILL_FILTER_MIGRATION = """
+ALTER TABLE budgetlens.bills
+    ADD COLUMN IF NOT EXISTS filter_type        VARCHAR(20) DEFAULT 'contains',
+    ADD COLUMN IF NOT EXISTS filter_value       TEXT,
+    ADD COLUMN IF NOT EXISTS aggregation_method VARCHAR(20) DEFAULT 'average';
+
+CREATE TABLE IF NOT EXISTS budgetlens.bill_excluded_hashes (
+    bill_id      UUID        NOT NULL REFERENCES budgetlens.bills(id) ON DELETE CASCADE,
+    content_hash VARCHAR(64) NOT NULL,
+    PRIMARY KEY (bill_id, content_hash)
+);
+"""
+
+PROFILE_MIGRATION = """
+CREATE TABLE IF NOT EXISTS budgetlens.profiles (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name        TEXT    NOT NULL,
+    description TEXT,
+    is_default  BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE budgetlens.bills
+    ADD COLUMN IF NOT EXISTS profile_id UUID REFERENCES budgetlens.profiles(id) ON DELETE SET NULL;
+
+ALTER TABLE budgetlens.income_transaction_sources
+    ADD COLUMN IF NOT EXISTS profile_id UUID REFERENCES budgetlens.profiles(id) ON DELETE SET NULL;
+
+ALTER TABLE budgetlens.income_sources
+    ADD COLUMN IF NOT EXISTS profile_id UUID REFERENCES budgetlens.profiles(id) ON DELETE SET NULL;
 """
 
 
-def init_schema():
-    execute(DDL)
-    execute(DROP_UNIQUE)
-    execute(DEDUP_VIEW)
-    execute(FREQUENCY_MIGRATION)
-    execute(INCOME_MIGRATION)
+def init_schema(engine):
+    def _run(sql: str):
+        with engine.connect() as conn:
+            conn.execute(text(sql))
+            conn.commit()
+
+    _run(DDL)
+    _run(DROP_UNIQUE)
+    _run(DEDUP_VIEW)
+    _run(FREQUENCY_MIGRATION)
+    _run(INCOME_MIGRATION)
+    _run(BILL_FILTER_MIGRATION)
+    _run(PROFILE_MIGRATION)

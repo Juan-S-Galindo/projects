@@ -3,6 +3,7 @@ import streamlit as st
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
+
 def _build_url() -> str:
     host = os.environ.get("PGHOST", "localhost")
     port = os.environ.get("PGPORT", "5432")
@@ -14,7 +15,10 @@ def _build_url() -> str:
 
 @st.cache_resource
 def get_engine():
-    return create_engine(_build_url(), pool_pre_ping=True)
+    from src.db.schema import init_schema
+    engine = create_engine(_build_url(), pool_pre_ping=True)
+    init_schema(engine)
+    return engine
 
 
 def get_session():

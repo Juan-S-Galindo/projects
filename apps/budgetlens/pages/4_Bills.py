@@ -1,6 +1,7 @@
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import re
 import streamlit as st
 import pandas as pd
 from datetime import date
@@ -15,7 +16,46 @@ from src.bill_calculator import (
 st.set_page_config(page_title="Bills — BudgetLens", layout="wide")
 st.title("🧾 Bills Manager")
 
-# ── Load bills ─────────────────────────────────────────────────────────────────
+FILTER_TYPES = {
+    "contains":    "Contains",
+    "starts_with": "Starts With",
+    "regex":       "Regex",
+}
+
+AGG_METHODS = {
+    "average": "Average per occurrence",
+    "sum_avg": "Sum per month, then average",
+}
+
+
+def apply_filter(df: pd.DataFrame, filter_type: str, filter_value: str) -> pd.DataFrame:
+    if not filter_value:
+        return df.iloc[0:0]
+    try:
+        if filter_type == "contains":
+            mask = df["description"].str.contains(filter_value, case=False, na=False)
+        elif filter_type == "starts_with":
+            mask = df["description"].str.startswith(filter_value, na=False)
+        else:
+            mask = df["description"].str.contains(filter_value, regex=True, case=False, na=False)
+        return df[mask]
+    except re.error:
+        return df.iloc[0:0]
+
+
+def compute_monthly(amounts: pd.Series, dates: pd.Series, method: str, unit: str, count: int) -> float:
+    if amounts.empty:
+        return 0.0
+    abs_amounts = amounts.abs()
+    if method == "sum_avg":
+        df = pd.DataFrame({"amount": abs_amounts, "date": pd.to_datetime(dates)})
+        df["month"] = df["date"].dt.to_period("M")
+        return float(df.groupby("month")["amount"].sum().mean())
+    else:
+        return monthly_equivalent(float(abs_amounts.mean()), unit, count)
+
+
+# ── Load ───────────────────────────────────────────────────────────────────────
 
 try:
     with get_engine().connect() as conn:
@@ -23,11 +63,40 @@ try:
             text("SELECT * FROM budgetlens.bills ORDER BY active DESC, name"),
             conn,
         )
+        profiles = pd.read_sql(
+            text("SELECT id, name, is_default FROM budgetlens.profiles ORDER BY is_default DESC, name"),
+            conn,
+        )
+        txns_all = pd.read_sql(
+            text("""
+                SELECT content_hash, description, transaction_date, amount
+                FROM budgetlens.transactions_deduped
+                WHERE amount < 0
+                ORDER BY transaction_date DESC
+            """),
+            conn,
+        )
+        excluded_df = pd.read_sql(
+            text("SELECT bill_id::text, content_hash FROM budgetlens.bill_excluded_hashes"),
+            conn,
+        )
 except Exception as e:
     st.error(f"Database error: {e}")
     st.stop()
 
-# ── Total committed ────────────────────────────────────────────────────────────
+profile_map = {str(r["id"]): r["name"] for _, r in profiles.iterrows()}
+profile_options = [None] + [str(r["id"]) for _, r in profiles.iterrows()]
+profile_labels = {None: "— No profile —", **profile_map}
+default_profile_id = next(
+    (str(r["id"]) for _, r in profiles.iterrows() if r["is_default"]), None
+)
+
+excluded_by_bill: dict[str, set[str]] = {}
+if not excluded_df.empty:
+    for bid, grp in excluded_df.groupby("bill_id"):
+        excluded_by_bill[bid] = set(grp["content_hash"].tolist())
+
+# ── Totals ─────────────────────────────────────────────────────────────────────
 
 active_bills = bills[bills["active"] == True] if not bills.empty else pd.DataFrame()
 total_monthly = float(active_bills["monthly_equivalent"].sum()) if not active_bills.empty else 0.0
@@ -36,211 +105,471 @@ st.metric("Total Committed Monthly Spend", f"${total_monthly:,.2f}")
 st.caption("Sum of all active bills converted to monthly equivalents")
 st.markdown("---")
 
-# ── Bill cards ─────────────────────────────────────────────────────────────────
+# ── Bill card renderer ─────────────────────────────────────────────────────────
 
-STATUS_COLORS = {
-    "paid":     ("🟢", "#16A34A"),
-    "due_soon": ("🟡", "#D97706"),
-    "overdue":  ("🔴", "#DC2626"),
-    "upcoming": ("⚪", "#6B7280"),
-}
+STATUS_EMOJI = {"paid": "🟢", "due_soon": "🟡", "overdue": "🔴", "upcoming": "⚪"}
 
 today = date.today()
 from_month = date(today.year, today.month, 1)
 
-if bills.empty:
-    st.info("No bills configured yet. Use the form below or mark a transaction as a bill from the Transactions page.")
-else:
-    for _, b in bills.iterrows():
-        last = b["last_charge_date"]
-        nxt = b["next_charge_date"]
-        if hasattr(last, "date"):
-            last = last.date() if pd.notna(last) else None
-        else:
-            last = last if (last is not None and not pd.isna(last)) else None
-        if hasattr(nxt, "date"):
-            nxt = nxt.date() if pd.notna(nxt) else None
-        else:
-            nxt = nxt if (nxt is not None and not pd.isna(nxt)) else None
 
-        freq_unit = b["frequency"]
-        freq_count = int(b.get("frequency_count", 1) or 1)
-        status = bill_status(nxt, last, freq_unit, freq_count)
-        emoji, _ = STATUS_COLORS[status]
-        active_label = "" if b["active"] else " *(inactive)*"
-        freq_display = frequency_label(freq_unit, freq_count)
+def render_bill_card(b):
+    bill_id = str(b["id"])
+    filter_type = b.get("filter_type") or "contains"
+    filter_value = b.get("filter_value") or ""
+    agg_method = b.get("aggregation_method") or "average"
 
-        with st.expander(
-            f"{emoji} **{b['name']}**{active_label}  —  "
-            f"${float(b['amount']):,.2f} {freq_display}  →  "
-            f"**${float(b['monthly_equivalent']):,.2f}/month**",
-            expanded=False,
-        ):
-            col1, col2, col3 = st.columns(3)
-            col1.markdown(f"**Category:** {CATEGORY_LABELS.get(b['category'], b['category'])}")
-            col2.markdown(f"**Last charge:** {last or 'Unknown'}")
-            col3.markdown(f"**Next charge:** {nxt or 'Unknown'}")
+    last = b["last_charge_date"]
+    nxt = b["next_charge_date"]
+    if hasattr(last, "date"):
+        last = last.date() if pd.notna(last) else None
+    else:
+        last = last if (last is not None and not pd.isna(last)) else None
+    if hasattr(nxt, "date"):
+        nxt = nxt.date() if pd.notna(nxt) else None
+    else:
+        nxt = nxt if (nxt is not None and not pd.isna(nxt)) else None
 
-            st.markdown("**Charge calendar (next 12 months):**")
-            start_date = b["start_date"]
-            if hasattr(start_date, "date"):
-                start_date = start_date.date()
+    freq_unit = b["frequency"]
+    freq_count = int(b.get("frequency_count", 1) or 1)
+    status = bill_status(nxt, last, freq_unit, freq_count)
+    emoji = STATUS_EMOJI[status]
+    active_label = "" if b["active"] else " *(inactive)*"
+    freq_display = frequency_label(freq_unit, freq_count)
 
-            hit = hit_months(start_date, freq_unit, freq_count, from_month, 12)
-            month_cells = []
-            for i in range(12):
-                m = from_month.replace(
-                    month=(from_month.month - 1 + i) % 12 + 1,
-                    year=from_month.year + (from_month.month - 1 + i) // 12,
+    matched = apply_filter(txns_all, filter_type, filter_value) if filter_value else pd.DataFrame()
+
+    with st.expander(
+        f"{emoji} **{b['name']}**{active_label}  —  "
+        f"${float(b['amount']):,.2f} {freq_display}  →  "
+        f"**${float(b['monthly_equivalent']):,.2f}/month**"
+        + (f"  ({len(matched)} transaction(s) matched)" if filter_value else ""),
+        expanded=False,
+    ):
+        txn_edited = None
+        include_mask = []
+        live_monthly = float(b["monthly_equivalent"])
+        matched_reset = pd.DataFrame()
+
+        if filter_value:
+            st.markdown("**Matched Transactions** — uncheck to exclude from the average")
+            if matched.empty:
+                st.caption("No transactions match this filter.")
+            else:
+                excluded_hashes = excluded_by_bill.get(bill_id, set())
+                matched_reset = matched.reset_index(drop=True)
+                included_mask_stored = ~matched_reset["content_hash"].isin(excluded_hashes)
+                txn_display = matched_reset[["transaction_date", "description", "amount"]].copy()
+                txn_display["transaction_date"] = txn_display["transaction_date"].astype(str)
+                txn_display["amount"] = txn_display["amount"].abs().astype(float)
+                txn_display["Include"] = included_mask_stored.values
+                txn_display = txn_display.rename(columns={
+                    "transaction_date": "Date",
+                    "description": "Description",
+                    "amount": "Amount ($)",
+                })
+                txn_edited = st.data_editor(
+                    txn_display,
+                    column_config={
+                        "Date": st.column_config.TextColumn(disabled=True, width="small"),
+                        "Description": st.column_config.TextColumn(disabled=True, width="large"),
+                        "Amount ($)": st.column_config.NumberColumn(disabled=True, format="$%.2f", width="small"),
+                        "Include": st.column_config.CheckboxColumn(width="small"),
+                    },
+                    hide_index=True,
+                    use_container_width=True,
+                    key=f"txn_editor_{bill_id}",
                 )
-                mkey = m.strftime("%Y-%m")
-                label = m.strftime("%b")
-                month_cells.append(f"**:blue[{label}]**" if mkey in hit else label)
-            st.markdown(" · ".join(month_cells))
-
-            if b["notes"]:
-                st.caption(f"Notes: {b['notes']}")
-
-            edit_col, del_col = st.columns([1, 1])
-            with edit_col:
-                if st.button("✏️ Edit", key=f"edit_{b['id']}"):
-                    st.session_state["editing_bill"] = str(b["id"])
-            with del_col:
-                if st.button("🗑️ Delete", key=f"del_{b['id']}"):
-                    try:
-                        with get_engine().begin() as conn:
-                            conn.execute(
-                                text("DELETE FROM budgetlens.bills WHERE id = :id"),
-                                {"id": str(b["id"])},
-                            )
-                        st.success(f"Deleted bill: {b['name']}")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Delete failed: {e}")
-
-# ── Edit bill ──────────────────────────────────────────────────────────────────
-
-if "editing_bill" in st.session_state and not bills.empty:
-    editing_id = st.session_state["editing_bill"]
-    row = bills[bills["id"].astype(str) == editing_id]
-    if not row.empty:
-        b = row.iloc[0]
-        cur_unit = b["frequency"]
-        cur_count = int(b.get("frequency_count", 1) or 1)
+                include_mask = txn_edited["Include"].values
+                if include_mask.any():
+                    sel_amounts = matched_reset.loc[include_mask, "amount"]
+                    sel_dates = matched_reset.loc[include_mask, "transaction_date"]
+                    live_monthly = compute_monthly(sel_amounts, sel_dates, agg_method, freq_unit, freq_count)
+                    avg_per_txn = float(sel_amounts.abs().mean())
+                    st.caption(
+                        f"{int(include_mask.sum())} selected  ·  "
+                        f"avg ${avg_per_txn:,.2f}  ·  "
+                        f"→ **${live_monthly:,.2f}/month**"
+                    )
+                else:
+                    live_monthly = 0.0
 
         st.markdown("---")
-        st.subheader(f"Edit: {b['name']}")
+        st.markdown("**Bill Settings**")
 
-        new_name = st.text_input("Name", value=b["name"], key="edit_name")
-        new_cat = st.selectbox(
-            "Category",
-            ALL_CATEGORIES,
-            index=ALL_CATEGORIES.index(b["category"]) if b["category"] in ALL_CATEGORIES else 0,
-            format_func=lambda c: CATEGORY_LABELS.get(c, c),
-            key="edit_cat",
+        e1, e2, e3 = st.columns(3)
+        with e1:
+            new_name = st.text_input("Name", value=b["name"], key=f"bname_{bill_id}")
+            new_active = st.checkbox("Active", value=bool(b["active"]), key=f"bactive_{bill_id}")
+            cur_profile = str(b["profile_id"]) if b.get("profile_id") and not pd.isna(b.get("profile_id")) else None
+            new_profile = st.selectbox(
+                "Profile",
+                profile_options,
+                index=profile_options.index(cur_profile) if cur_profile in profile_options else 0,
+                format_func=lambda pid: profile_labels.get(pid, "— No profile —"),
+                key=f"bprofile_{bill_id}",
+            )
+        with e2:
+            new_filter_type = st.selectbox(
+                "Filter type",
+                list(FILTER_TYPES.keys()),
+                index=list(FILTER_TYPES.keys()).index(filter_type) if filter_type in FILTER_TYPES else 0,
+                format_func=lambda t: FILTER_TYPES[t],
+                key=f"bftype_{bill_id}",
+            )
+            new_filter_value = st.text_input(
+                "Filter value", value=filter_value, key=f"bfval_{bill_id}"
+            )
+            new_cat = st.selectbox(
+                "Category",
+                ALL_CATEGORIES,
+                index=ALL_CATEGORIES.index(b["category"]) if b["category"] in ALL_CATEGORIES else 0,
+                format_func=lambda c: CATEGORY_LABELS.get(c, c),
+                key=f"bcat_{bill_id}",
+            )
+        with e3:
+            bc1, bc2 = st.columns(2)
+            with bc1:
+                new_count = st.number_input(
+                    "Every", value=freq_count, min_value=1, step=1, key=f"bcnt_{bill_id}"
+                )
+            with bc2:
+                new_unit = st.selectbox(
+                    "Period",
+                    list(PERIOD_UNITS.keys()),
+                    index=list(PERIOD_UNITS.keys()).index(freq_unit) if freq_unit in PERIOD_UNITS else 1,
+                    format_func=lambda u: PERIOD_UNITS[u],
+                    key=f"bunit_{bill_id}",
+                )
+            new_agg = st.selectbox(
+                "Monthly calculation",
+                list(AGG_METHODS.keys()),
+                index=list(AGG_METHODS.keys()).index(agg_method) if agg_method in AGG_METHODS else 0,
+                format_func=lambda m: AGG_METHODS[m],
+                key=f"bagg_{bill_id}",
+            )
+            use_override = st.checkbox(
+                "Override amount", value=False, key=f"bovr_toggle_{bill_id}"
+            )
+            new_override = None
+            if use_override:
+                base = live_monthly if live_monthly > 0 else float(b["monthly_equivalent"])
+                new_override = st.number_input(
+                    "Monthly amount ($)", value=round(base, 2), min_value=0.01, key=f"bovr_{bill_id}"
+                )
+
+        has_txns = txn_edited is not None and include_mask.any()
+        me_preview = (
+            new_override if (use_override and new_override)
+            else live_monthly if has_txns
+            else float(b["monthly_equivalent"])
         )
-        ec1, ec2, ec3 = st.columns(3)
-        with ec1:
-            new_amount = st.number_input("Amount ($)", value=float(b["amount"]), min_value=0.01, key="edit_amount")
-        with ec2:
-            new_count = st.number_input(
-                "Every", value=cur_count, min_value=1, step=1, key="edit_count"
-            )
-        with ec3:
-            new_unit = st.selectbox(
-                "Period",
-                list(PERIOD_UNITS.keys()),
-                index=list(PERIOD_UNITS.keys()).index(cur_unit) if cur_unit in PERIOD_UNITS else 1,
-                format_func=lambda u: PERIOD_UNITS[u],
-                key="edit_unit",
-            )
-
-        me_preview = monthly_equivalent(new_amount, new_unit, new_count)
+        stored_amount = (
+            float(matched_reset.loc[include_mask, "amount"].abs().mean())
+            if has_txns else float(b["amount"])
+        )
         st.info(f"Monthly equivalent: **${me_preview:,.2f}/month**")
 
-        new_active = st.checkbox("Active", value=bool(b["active"]), key="edit_active")
-        new_notes = st.text_area("Notes", value=b["notes"] or "", key="edit_notes")
+        st.markdown("**Charge calendar (next 12 months):**")
+        start_date = b["start_date"]
+        if hasattr(start_date, "date"):
+            start_date = start_date.date()
+        hit = hit_months(start_date, new_unit, new_count, from_month, 12)
+        month_cells = []
+        for i in range(12):
+            m = from_month.replace(
+                month=(from_month.month - 1 + i) % 12 + 1,
+                year=from_month.year + (from_month.month - 1 + i) // 12,
+            )
+            mkey = m.strftime("%Y-%m")
+            month_cells.append(f"**:blue[{m.strftime('%b')}]**" if mkey in hit else m.strftime("%b"))
+        st.markdown(" · ".join(month_cells))
 
-        sc1, sc2 = st.columns([1, 4])
+        if b.get("notes"):
+            st.caption(f"Notes: {b['notes']}")
+
+        sc1, sc2 = st.columns([1, 1])
         with sc1:
-            if st.button("Save Changes", type="primary", key="edit_save"):
+            if st.button("💾 Save", type="primary", key=f"bsave_{bill_id}"):
                 try:
+                    new_last = last
+                    if has_txns:
+                        most_recent_raw = matched_reset.loc[include_mask, "transaction_date"].max()
+                        new_last = most_recent_raw.date() if hasattr(most_recent_raw, "date") else most_recent_raw
+                    new_ncd = next_charge_date(new_last, new_unit, new_count) if new_last else None
+
                     with get_engine().begin() as conn:
                         conn.execute(
                             text("""
                                 UPDATE budgetlens.bills
                                 SET name = :name, category = :cat, frequency = :unit,
                                     frequency_count = :cnt, amount = :amt,
-                                    monthly_equivalent = :me, active = :active, notes = :notes
+                                    monthly_equivalent = :me, active = :active,
+                                    filter_type = :ftype, filter_value = :fval,
+                                    aggregation_method = :agg, profile_id = :pid,
+                                    last_charge_date = :lcd, next_charge_date = :ncd
                                 WHERE id = :id
                             """),
                             {"name": new_name, "cat": new_cat, "unit": new_unit,
-                             "cnt": new_count, "amt": new_amount, "me": me_preview,
-                             "active": new_active, "notes": new_notes or None, "id": editing_id},
+                             "cnt": new_count, "amt": stored_amount, "me": me_preview,
+                             "active": new_active, "ftype": new_filter_type,
+                             "fval": new_filter_value or None, "agg": new_agg,
+                             "pid": new_profile, "lcd": new_last, "ncd": new_ncd,
+                             "id": bill_id},
                         )
-                    del st.session_state["editing_bill"]
-                    st.success("Bill updated!")
+                        if txn_edited is not None and not matched_reset.empty:
+                            group_hashes = matched_reset["content_hash"].tolist()
+                            conn.execute(
+                                text("""
+                                    DELETE FROM budgetlens.bill_excluded_hashes
+                                    WHERE bill_id = :bid AND content_hash = ANY(:hashes)
+                                """),
+                                {"bid": bill_id, "hashes": group_hashes},
+                            )
+                            for h in matched_reset.loc[~txn_edited["Include"].values, "content_hash"].tolist():
+                                conn.execute(
+                                    text("""
+                                        INSERT INTO budgetlens.bill_excluded_hashes (bill_id, content_hash)
+                                        VALUES (:bid, :h) ON CONFLICT DO NOTHING
+                                    """),
+                                    {"bid": bill_id, "h": h},
+                                )
+                    st.success("Saved.")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Save failed: {e}")
         with sc2:
-            if st.button("Cancel", key="edit_cancel"):
-                del st.session_state["editing_bill"]
-                st.rerun()
+            if st.button("🗑️ Delete", key=f"bdel_{bill_id}"):
+                try:
+                    with get_engine().begin() as conn:
+                        conn.execute(
+                            text("DELETE FROM budgetlens.bills WHERE id = :id"),
+                            {"id": bill_id},
+                        )
+                    st.success(f"Deleted: {b['name']}")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Delete failed: {e}")
 
-# ── Add new bill ───────────────────────────────────────────────────────────────
+
+# ── Bills grouped by profile ───────────────────────────────────────────────────
+
+if bills.empty:
+    st.info("No bills configured yet. Add one below.")
+else:
+    bills["_pid"] = bills["profile_id"].apply(
+        lambda x: str(x) if x and not pd.isna(x) else None
+    )
+    unlinked = bills[bills["_pid"].isna()]
+
+    tab_profiles = [
+        p for _, p in profiles.iterrows()
+        if not bills[bills["_pid"] == str(p["id"])].empty
+    ]
+    tab_names = [
+        f"{'🏷️ ' if p['is_default'] else ''}{p['name']}"
+        for p in tab_profiles
+    ]
+    if not unlinked.empty:
+        tab_names.append("Uncategorized")
+
+    if tab_names:
+        tabs = st.tabs(tab_names)
+        for tab, p in zip(tabs[:len(tab_profiles)], tab_profiles):
+            with tab:
+                group = bills[bills["_pid"] == str(p["id"])]
+                monthly_sum = float(group[group["active"] == True]["monthly_equivalent"].sum())
+                st.caption(f"{len(group)} bill(s) · ${monthly_sum:,.2f}/month committed")
+                for _, b in group.iterrows():
+                    render_bill_card(b)
+        if not unlinked.empty:
+            with tabs[-1]:
+                monthly_unlinked = float(unlinked[unlinked["active"] == True]["monthly_equivalent"].sum())
+                st.caption(f"{len(unlinked)} bill(s) · ${monthly_unlinked:,.2f}/month committed")
+                for _, b in unlinked.iterrows():
+                    render_bill_card(b)
+    else:
+        for _, b in bills.iterrows():
+            render_bill_card(b)
 
 st.markdown("---")
+
+# ── Add New Bill ───────────────────────────────────────────────────────────────
+
 st.subheader("Add New Bill")
 
-a1, a2 = st.columns(2)
+if "add_bill_gen" not in st.session_state:
+    st.session_state["add_bill_gen"] = 0
+_gen = st.session_state["add_bill_gen"]
+
+a1, a2, a3 = st.columns(3)
 with a1:
-    name = st.text_input("Bill name *", placeholder="e.g. Netflix", key="add_name")
-    amount = st.number_input("Amount ($) *", min_value=0.01, step=0.01, key="add_amount")
-    start = st.date_input("First charge date *", value=today, key="add_start")
-with a2:
-    category = st.selectbox(
+    add_name = st.text_input("Bill name *", placeholder="e.g. Mortgage", key=f"add_name_{_gen}")
+    add_cat = st.selectbox(
         "Category",
         ALL_CATEGORIES,
         format_func=lambda c: CATEGORY_LABELS.get(c, c),
-        key="add_category",
+        key=f"add_cat_{_gen}",
     )
+    add_profile = st.selectbox(
+        "Profile",
+        profile_options,
+        index=profile_options.index(default_profile_id) if default_profile_id in profile_options else 0,
+        format_func=lambda pid: profile_labels.get(pid, "— No profile —"),
+        key=f"add_profile_{_gen}",
+    )
+with a2:
+    add_filter_type = st.selectbox(
+        "Filter type",
+        list(FILTER_TYPES.keys()),
+        format_func=lambda t: FILTER_TYPES[t],
+        key=f"add_ftype_{_gen}",
+    )
+    add_filter_value = st.text_input(
+        "Filter value *", placeholder="e.g. LAKEVIEW LN SRV", key=f"add_fval_{_gen}"
+    )
+with a3:
     fc1, fc2 = st.columns(2)
     with fc1:
-        add_count = st.number_input("Every", value=1, min_value=1, step=1, key="add_count")
+        add_count = st.number_input("Every", value=1, min_value=1, step=1, key=f"add_count_{_gen}")
     with fc2:
         add_unit = st.selectbox(
             "Period",
             list(PERIOD_UNITS.keys()),
             index=1,
             format_func=lambda u: PERIOD_UNITS[u],
-            key="add_unit",
+            key=f"add_unit_{_gen}",
         )
-    notes = st.text_input("Notes (optional)", key="add_notes")
+    add_agg = st.selectbox(
+        "Monthly calculation",
+        list(AGG_METHODS.keys()),
+        format_func=lambda m: AGG_METHODS[m],
+        key=f"add_agg_{_gen}",
+    )
+    add_notes = st.text_input("Notes (optional)", key=f"add_notes_{_gen}")
 
-me = monthly_equivalent(amount, add_unit, add_count)
-st.info(f"Monthly equivalent: **${me:,.2f}/month**")
+# Transaction preview
+add_preview_df = None
+add_preview = pd.DataFrame()
+if add_filter_value and not txns_all.empty:
+    add_preview = apply_filter(txns_all, add_filter_type, add_filter_value)
+    if not add_preview.empty:
+        add_preview_reset = add_preview.reset_index(drop=True)
+        txn_add_display = add_preview_reset[["transaction_date", "description", "amount"]].copy()
+        txn_add_display["transaction_date"] = txn_add_display["transaction_date"].astype(str)
+        txn_add_display["amount"] = txn_add_display["amount"].abs().astype(float)
+        txn_add_display["Include"] = True
+        txn_add_display = txn_add_display.rename(columns={
+            "transaction_date": "Date",
+            "description": "Description",
+            "amount": "Amount ($)",
+        })
 
-if st.button("➕ Add Bill", type="primary", key="add_submit"):
-    if not name:
-        st.error("Bill name is required.")
+        st.markdown("**Matching Transactions** — uncheck to exclude from the average")
+        add_preview_df = st.data_editor(
+            txn_add_display,
+            column_config={
+                "Date": st.column_config.TextColumn(disabled=True, width="small"),
+                "Description": st.column_config.TextColumn(disabled=True, width="large"),
+                "Amount ($)": st.column_config.NumberColumn(disabled=True, format="$%.2f", width="small"),
+                "Include": st.column_config.CheckboxColumn(width="small"),
+            },
+            hide_index=True,
+            use_container_width=True,
+            key=f"add_preview_editor_{_gen}",
+        )
+
+        inc_mask = add_preview_df["Include"].values
+        if inc_mask.any():
+            sel_amounts = add_preview_reset.loc[inc_mask, "amount"]
+            sel_dates = add_preview_reset.loc[inc_mask, "transaction_date"]
+            monthly_add = compute_monthly(sel_amounts, sel_dates, add_agg, add_unit, add_count)
+            avg_per_txn = float(sel_amounts.abs().mean())
+            st.info(
+                f"{int(inc_mask.sum())} selected  ·  avg ${avg_per_txn:,.2f}  ·  "
+                f"→ **${monthly_add:,.2f}/month** ({AGG_METHODS[add_agg]})"
+            )
+        else:
+            st.warning("No transactions selected.")
     else:
-        ncd = next_charge_date(start, add_unit, add_count)
-        try:
-            with get_engine().begin() as conn:
-                conn.execute(
-                    text("""
-                        INSERT INTO budgetlens.bills
-                            (name, category, frequency, frequency_count, amount, monthly_equivalent,
-                             start_date, last_charge_date, next_charge_date, notes)
-                        VALUES
-                            (:name, :cat, :unit, :cnt, :amt, :me, :sd, :lcd, :ncd, :notes)
-                    """),
-                    {"name": name, "cat": category, "unit": add_unit, "cnt": add_count,
-                     "amt": amount, "me": me, "sd": start, "lcd": start,
-                     "ncd": ncd, "notes": notes or None},
+        st.warning("No transactions match this filter.")
+
+btn1, btn2 = st.columns([1, 5])
+with btn1:
+    if st.button("➕ Add Bill", type="primary", key="add_bill_submit"):
+        if not add_name or not add_filter_value:
+            st.error("Bill name and filter value are required.")
+        elif add_preview_df is None or not add_preview_df["Include"].any():
+            st.error("Select at least one transaction to determine the bill amount.")
+        else:
+            try:
+                add_preview_reset = add_preview.reset_index(drop=True)
+                inc_mask = add_preview_df["Include"].values
+                sel_amounts = add_preview_reset.loc[inc_mask, "amount"]
+                sel_dates = add_preview_reset.loc[inc_mask, "transaction_date"]
+                amount = float(sel_amounts.abs().mean())
+                me = compute_monthly(sel_amounts, sel_dates, add_agg, add_unit, add_count)
+
+                dates = add_preview_reset.loc[inc_mask, "transaction_date"]
+                last_dt = dates.max()
+                first_dt = dates.min()
+                if hasattr(last_dt, "date"):
+                    last_dt = last_dt.date()
+                if hasattr(first_dt, "date"):
+                    first_dt = first_dt.date()
+                ncd = next_charge_date(last_dt, add_unit, add_count)
+
+                with get_engine().begin() as conn:
+                    result = conn.execute(
+                        text("""
+                            INSERT INTO budgetlens.bills
+                                (name, category, frequency, frequency_count, amount,
+                                 monthly_equivalent, start_date, last_charge_date, next_charge_date,
+                                 notes, filter_type, filter_value, aggregation_method, profile_id)
+                            VALUES
+                                (:name, :cat, :unit, :cnt, :amt, :me, :sd, :lcd, :ncd,
+                                 :notes, :ftype, :fval, :agg, :pid)
+                            RETURNING id
+                        """),
+                        {"name": add_name, "cat": add_cat, "unit": add_unit, "cnt": add_count,
+                         "amt": amount, "me": me, "sd": first_dt, "lcd": last_dt, "ncd": ncd,
+                         "notes": add_notes or None, "ftype": add_filter_type,
+                         "fval": add_filter_value, "agg": add_agg, "pid": add_profile},
+                    )
+                    new_bill_id = str(result.fetchone()[0])
+
+                    for h in add_preview_reset.loc[~inc_mask, "content_hash"].tolist():
+                        conn.execute(
+                            text("""
+                                INSERT INTO budgetlens.bill_excluded_hashes (bill_id, content_hash)
+                                VALUES (:bid, :h) ON CONFLICT DO NOTHING
+                            """),
+                            {"bid": new_bill_id, "h": h},
+                        )
+
+                    # Update ALL matched transactions (included + excluded)
+                    all_matched_hashes = add_preview_reset["content_hash"].tolist()
+                    if all_matched_hashes:
+                        conn.execute(
+                            text("""
+                                UPDATE budgetlens.transactions
+                                SET bill_id = :bid,
+                                    category = :cat,
+                                    category_overridden = TRUE
+                                WHERE content_hash = ANY(:hashes)
+                            """),
+                            {"bid": new_bill_id, "cat": add_cat, "hashes": all_matched_hashes},
+                        )
+
+                st.success(
+                    f"Bill **{add_name}** added — ${me:,.2f}/month  ·  "
+                    f"{len(add_preview_reset)} transaction(s) linked"
                 )
-            st.success(f"Bill **{name}** added — ${me:,.2f}/month")
-            st.rerun()
-        except Exception as e:
-            st.error(f"Failed to add bill: {e}")
+                st.session_state["add_bill_gen"] += 1
+                st.rerun()
+            except Exception as e:
+                st.error(f"Failed to add bill: {e}")
+with btn2:
+    if st.button("🗑️ Clear", key="add_bill_clear"):
+        st.session_state["add_bill_gen"] += 1
+        st.rerun()
