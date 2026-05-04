@@ -8,7 +8,6 @@ import plotly.graph_objects as go
 from datetime import date
 from sqlalchemy import text
 from src.db.connection import get_engine
-from src.db.schema import init_schema
 from src.categorizer import CATEGORY_LABELS
 
 st.set_page_config(
@@ -16,9 +15,6 @@ st.set_page_config(
     page_icon="💰",
     layout="wide",
 )
-
-# Initialize schema on first load
-init_schema()
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
