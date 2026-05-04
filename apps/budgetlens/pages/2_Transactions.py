@@ -1,13 +1,13 @@
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import re as _re
 import streamlit as st
 import pandas as pd
 from datetime import date
 from sqlalchemy import text
 from src.db.connection import get_engine
 from src.categorizer import ALL_CATEGORIES, CATEGORY_LABELS
-from src.bill_calculator import PERIOD_UNITS, monthly_equivalent, next_charge_date
 
 st.set_page_config(page_title="Transactions — BudgetLens", layout="wide")
 st.title("📋 Transactions")
@@ -44,8 +44,6 @@ with col4:
     search = st.text_input("Search description", placeholder="e.g. Amazon")
 
 # ── Load ───────────────────────────────────────────────────────────────────────
-# is_bill is resolved via bill_transactions JOIN through content_hash so that
-# re-importing a file doesn't reset the bill status on already-linked rows.
 
 try:
     with get_engine().connect() as conn:
@@ -83,20 +81,22 @@ try:
                     FROM budgetlens.bill_transactions bt
                     JOIN budgetlens.transactions t ON t.id = bt.transaction_id
                     WHERE t.content_hash = td.content_hash
-                ) AS is_bill,
-                (
-                    SELECT bt.bill_id::text
-                    FROM budgetlens.bill_transactions bt
-                    JOIN budgetlens.transactions t ON t.id = bt.transaction_id
-                    WHERE t.content_hash = td.content_hash
-                    LIMIT 1
-                ) AS bill_id
+                ) AS is_bill
             FROM budgetlens.transactions_deduped td
             WHERE {' AND '.join(where)}
             ORDER BY td.transaction_date DESC
             LIMIT 500
         """
         df = pd.read_sql(text(query), conn, params=params)
+
+        income_sources = pd.read_sql(
+            text("""
+                SELECT filter_type, filter_value
+                FROM budgetlens.income_transaction_sources
+                WHERE active = TRUE AND filter_value IS NOT NULL
+            """),
+            conn,
+        )
 except Exception as e:
     st.error(f"Failed to load transactions: {e}")
     st.stop()
@@ -112,15 +112,37 @@ st.caption(f"Showing {len(df)} transaction(s)")
 cat_label_map = {CATEGORY_LABELS.get(c, c): c for c in ALL_CATEGORIES}
 label_options = list(cat_label_map.keys())
 
+def _matches_any_source(desc: str, sources: pd.DataFrame) -> bool:
+    lower = desc.lower()
+    for _, src in sources.iterrows():
+        fv = src["filter_value"]
+        ft = src["filter_type"]
+        try:
+            if ft == "contains" and fv.lower() in lower:
+                return True
+            elif ft == "starts_with" and lower.startswith(fv.lower()):
+                return True
+            elif ft == "regex" and _re.search(fv, desc, _re.IGNORECASE):
+                return True
+        except Exception:
+            pass
+    return False
+
 display = df.copy()
 display["Category"] = display["category"].map(lambda c: CATEGORY_LABELS.get(c, c))
 display["Source"] = display["source"].map({"chase": "Chase", "boa": "BOA"})
 display["Date"] = display["transaction_date"].astype(str)
 display["Amount ($)"] = display["amount"].astype(float)
-display["Is Bill"] = display["is_bill"].astype(bool)
+display["Bill"] = display["is_bill"].astype(bool)
+if not income_sources.empty:
+    display["Income"] = display["description"].apply(
+        lambda d: _matches_any_source(d, income_sources)
+    )
+else:
+    display["Income"] = False
 
 edited = st.data_editor(
-    display[["Date", "Source", "description", "Amount ($)", "Category", "Is Bill"]].rename(
+    display[["Date", "Source", "description", "Amount ($)", "Category", "Bill", "Income"]].rename(
         columns={"description": "Description"}
     ),
     column_config={
@@ -131,28 +153,21 @@ edited = st.data_editor(
         "Category": st.column_config.SelectboxColumn(
             "Category", options=label_options, width="medium"
         ),
-        "Is Bill": st.column_config.CheckboxColumn(
-            "Is Bill", help="Check to mark as a recurring bill", width="small"
-        ),
+        "Bill": st.column_config.CheckboxColumn("Bill", disabled=True, width="small"),
+        "Income": st.column_config.CheckboxColumn("Income", disabled=True, width="small"),
     },
     hide_index=True,
     use_container_width=True,
 )
 
-# ── Save — categories + bill toggles ─────────────────────────────────────────
+# ── Save — category overrides ──────────────────────────────────────────────────
 
 if st.button("💾 Save Changes", type="primary"):
     new_cats = edited["Category"].map(cat_label_map)
     cat_changed = new_cats.values != display["Category"].map(cat_label_map).values
 
-    new_is_bill = edited["Is Bill"].astype(bool).values
-    old_is_bill = display["Is Bill"].values
-    newly_billed = [i for i, (n, o) in enumerate(zip(new_is_bill, old_is_bill)) if n and not o]
-    newly_unbilled = [i for i, (n, o) in enumerate(zip(new_is_bill, old_is_bill)) if not n and o]
-
     try:
         with get_engine().begin() as conn:
-            # Category overrides — update all transactions with the same description
             for i, (changed, new_cat) in enumerate(zip(cat_changed, new_cats)):
                 if changed:
                     conn.execute(
@@ -164,181 +179,9 @@ if st.button("💾 Save Changes", type="primary"):
                         {"cat": new_cat, "desc": df.iloc[i]["description"]},
                     )
 
-            # Unlink bills (uncheck)
-            for i in newly_unbilled:
-                content_hash = df.iloc[i]["content_hash"]
-                conn.execute(
-                    text("""
-                        DELETE FROM budgetlens.bill_transactions
-                        WHERE transaction_id IN (
-                            SELECT id FROM budgetlens.transactions
-                            WHERE content_hash = :hash
-                        )
-                    """),
-                    {"hash": content_hash},
-                )
-                conn.execute(
-                    text("""
-                        UPDATE budgetlens.transactions
-                        SET bill_id = NULL
-                        WHERE content_hash = :hash
-                    """),
-                    {"hash": content_hash},
-                )
-
-        msgs = []
         if cat_changed.any():
-            msgs.append(f"{int(cat_changed.sum())} category change(s) saved")
-        if newly_unbilled:
-            msgs.append(f"{len(newly_unbilled)} bill(s) unlinked")
-        if msgs:
-            st.success(" · ".join(msgs))
-
-        # Remove newly-unbilled rows from the pending configure section
-        if newly_unbilled and "pending_bill_rows" in st.session_state:
-            unbilled_hashes = {df.iloc[i]["content_hash"] for i in newly_unbilled}
-            snapshot = st.session_state.get("pending_bill_df_snapshot", pd.DataFrame())
-            remaining = [
-                j for j in st.session_state["pending_bill_rows"]
-                if not snapshot.empty
-                and snapshot.iloc[j]["content_hash"] not in unbilled_hashes
-            ]
-            if remaining:
-                st.session_state["pending_bill_rows"] = remaining
-            else:
-                st.session_state.pop("pending_bill_rows", None)
-                st.session_state.pop("pending_bill_df_snapshot", None)
-
-        # Store newly-billed row indices for the config form below
-        if newly_billed:
-            st.session_state["pending_bill_rows"] = newly_billed
-            st.session_state["pending_bill_df_snapshot"] = df.copy()
-        else:
-            st.rerun()
+            st.success(f"{int(cat_changed.sum())} category change(s) saved")
+        st.rerun()
 
     except Exception as e:
         st.error(f"Save failed: {e}")
-
-# ── Bill configuration form for newly-checked rows ────────────────────────────
-
-pending = st.session_state.get("pending_bill_rows", [])
-pending_df = st.session_state.get("pending_bill_df_snapshot", df)
-
-if pending:
-    st.markdown("---")
-    st.subheader("Configure New Bills")
-    st.caption("Set the frequency for each transaction you just marked as a bill.")
-
-    for i in pending:
-        row = pending_df.iloc[i]
-        desc = row["description"]
-        t_date = row["transaction_date"]
-        if hasattr(t_date, "date"):
-            t_date = t_date.date()
-
-        # Average amount across all matching transactions in the last 12 months
-        try:
-            with get_engine().connect() as conn:
-                avg_row = conn.execute(
-                    text("""
-                        SELECT AVG(ABS(amount)) AS avg_amount, COUNT(*) AS occurrences
-                        FROM budgetlens.transactions_deduped
-                        WHERE description = :desc
-                          AND amount < 0
-                          AND transaction_date >= CURRENT_DATE - INTERVAL '12 months'
-                    """),
-                    {"desc": desc},
-                ).fetchone()
-            avg_amt = float(avg_row[0]) if avg_row and avg_row[0] else abs(float(row["amount"]))
-            occurrences = int(avg_row[1]) if avg_row and avg_row[1] else 1
-        except Exception:
-            avg_amt = abs(float(row["amount"]))
-            occurrences = 1
-
-        occ_label = f"{occurrences} charge(s) in last 12 months · avg ${avg_amt:,.2f}"
-        with st.expander(f"🧾 {desc}  —  {occ_label}", expanded=True):
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                bill_name = st.text_input("Bill name", value=desc[:50], key=f"bname_{i}")
-            with c2:
-                bc1, bc2 = st.columns(2)
-                with bc1:
-                    bill_count = st.number_input("Every", value=1, min_value=1, step=1, key=f"bcnt_{i}")
-                with bc2:
-                    bill_unit = st.selectbox(
-                        "Period",
-                        list(PERIOD_UNITS.keys()),
-                        index=1,
-                        format_func=lambda u: PERIOD_UNITS[u],
-                        key=f"bunit_{i}",
-                    )
-            with c3:
-                bill_cat = st.selectbox(
-                    "Category",
-                    ALL_CATEGORIES,
-                    format_func=lambda c: CATEGORY_LABELS.get(c, c),
-                    index=ALL_CATEGORIES.index(row["category"])
-                    if row["category"] in ALL_CATEGORIES else 0,
-                    key=f"bcat_{i}",
-                )
-
-            bill_amt = st.number_input(
-                "Amount per charge ($)",
-                value=round(avg_amt, 2),
-                min_value=0.01,
-                key=f"bamt_{i}",
-            )
-
-            me = monthly_equivalent(bill_amt, bill_unit, bill_count)
-            st.info(f"Monthly equivalent: **${me:,.2f}/month**")
-
-            if st.button("✅ Create Bill", type="primary", key=f"bsubmit_{i}"):
-                ncd = next_charge_date(t_date, bill_unit, bill_count)
-                try:
-                    with get_engine().begin() as conn:
-                        result = conn.execute(
-                            text("""
-                                INSERT INTO budgetlens.bills
-                                    (name, category, frequency, frequency_count, amount,
-                                     monthly_equivalent, start_date, last_charge_date, next_charge_date)
-                                VALUES (:name, :cat, :unit, :cnt, :amt, :me, :sd, :lcd, :ncd)
-                                RETURNING id
-                            """),
-                            {"name": bill_name, "cat": bill_cat, "unit": bill_unit,
-                             "cnt": bill_count, "amt": bill_amt, "me": me,
-                             "sd": t_date, "lcd": t_date, "ncd": ncd},
-                        )
-                        bill_id = str(result.fetchone()[0])
-
-                        # Link ALL transactions with matching description
-                        conn.execute(
-                            text("""
-                                UPDATE budgetlens.transactions
-                                SET bill_id = :bid
-                                WHERE description = :desc
-                            """),
-                            {"bid": bill_id, "desc": desc},
-                        )
-                        linked = conn.execute(
-                            text("""
-                                INSERT INTO budgetlens.bill_transactions (bill_id, transaction_id)
-                                SELECT :bid, id
-                                FROM budgetlens.transactions
-                                WHERE description = :desc
-                                ON CONFLICT DO NOTHING
-                            """),
-                            {"bid": bill_id, "desc": desc},
-                        ).rowcount
-
-                    st.success(
-                        f"Bill **{bill_name}** created — ${me:,.2f}/month "
-                        f"({linked} transaction(s) linked)"
-                    )
-                    remaining = [x for x in st.session_state["pending_bill_rows"] if x != i]
-                    st.session_state["pending_bill_rows"] = remaining
-                    if not remaining:
-                        del st.session_state["pending_bill_rows"]
-                        del st.session_state["pending_bill_df_snapshot"]
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Failed to create bill: {e}")

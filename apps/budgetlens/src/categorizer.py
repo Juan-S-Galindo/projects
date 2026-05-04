@@ -42,10 +42,14 @@ KEYWORD_RULES: list[tuple[list[str], str]] = [
     (["netflix", "hulu", "spotify", "disney+", "hbo max", "hbo",
       "paramount+", "peacock", "youtube premium", "pandora",
       "apple.com/bill", "apple tv"], "streaming"),
+    # Wireless & Internet (before generic utilities)
+    (["at&t", "verizon", "t-mobile", "google fi", "mint mobile",
+      "spectrum", "comcast", "xfinity", "cox communications",
+      "frontier", "centurylink", "lumen", "starlink",
+      "wireless", "internet service"], "wireless_internet"),
     # Utilities
     (["pedernales", "one gas texas", "centerpoint", "txu energy",
-      "atmos", "spectrum", "comcast", "xfinity", "at&t", "verizon",
-      "t-mobile", "google fi", "dripping springs water", "city of dripping springs",
+      "atmos", "dripping springs water", "city of dripping springs",
       "city of austin", "oncor", "austin energy"], "utilities"),
     # Insurance
     (["state farm", "geico", "progressive", "allstate", "farmers",
@@ -89,7 +93,7 @@ KEYWORD_RULES: list[tuple[list[str], str]] = [
 ]
 
 ALL_CATEGORIES = [
-    "dining", "groceries", "gas", "utilities", "streaming",
+    "dining", "groceries", "gas", "utilities", "wireless_internet", "streaming",
     "subscriptions", "mortgage", "hoa", "rent", "insurance",
     "medical", "shopping", "automotive", "travel", "transportation",
     "entertainment", "fitness", "education", "personal_care",
@@ -102,6 +106,7 @@ CATEGORY_LABELS = {
     "groceries": "Groceries",
     "gas": "Gas",
     "utilities": "Utilities",
+    "wireless_internet": "Wireless and Internet",
     "streaming": "Streaming",
     "subscriptions": "Subscriptions",
     "mortgage": "Mortgage",
