@@ -144,10 +144,10 @@ if st.button("✅ Confirm Import", type="primary"):
         "PGPASSWORD": os.environ.get("PGPASSWORD", ""),
         "PGDATABASE": os.environ.get("PGDATABASE", "expenses"),
     }
-    with st.spinner("Running dbt to refresh the deduplicated table…"):
+    with st.spinner("Running dbt build (models + tests)…"):
         try:
             result = subprocess.run(
-                ["dbt", "run", "--project-dir", dbt_dir, "--profiles-dir", dbt_dir],
+                ["dbt", "build", "--project-dir", dbt_dir, "--profiles-dir", dbt_dir],
                 capture_output=True,
                 text=True,
                 timeout=120,
@@ -155,18 +155,18 @@ if st.button("✅ Confirm Import", type="primary"):
             )
             dbt_output = result.stdout + result.stderr
             if result.returncode == 0:
-                st.success("dbt models refreshed — deduplicated table is up to date.")
+                st.success("dbt build passed — deduplicated table rebuilt and all tests green.")
                 with st.expander("dbt output", expanded=False):
                     st.code(dbt_output)
             else:
                 st.warning(
-                    "dbt run failed — imported rows are staged but the "
-                    "deduplicated table may be stale."
+                    "dbt build failed — imported rows are staged but the "
+                    "deduplicated table may be stale. Check output for details."
                 )
                 with st.expander("dbt output", expanded=True):
                     st.code(dbt_output)
         except FileNotFoundError:
             st.warning(
                 "`dbt` not found in PATH — skipping model refresh. "
-                "Run `dbt run` manually from `apps/budgetlens/dbt/`."
+                "Run `dbt build` manually from `apps/budgetlens/dbt/`."
             )
