@@ -129,7 +129,7 @@ def render_bill_card(b):
     matched = apply_filter(txns_all, filter_type, filter_value) if filter_value else pd.DataFrame()
 
     with st.expander(
-        f"{emoji} **{b['name']}**{active_label}  —  ${float(b['monthly_equivalent']):,.2f}/month",
+        f"{emoji} **{b['name'].strip()}**{active_label}  —  ${float(b['monthly_equivalent']):,.2f}/month",
         expanded=False,
     ):
         txn_edited = None
