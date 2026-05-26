@@ -1,0 +1,173 @@
+version: 2
+
+sources:
+  - name: budgetlens
+    description: >
+      Raw BudgetLens schema in PostgreSQL. The transactions table is append-only;
+      every import run adds rows regardless of duplicates. txn_hash is the natural
+      deduplication key; transaction_attributes holds all mutable per-transaction state.
+    schema: budgetlens
+    tables:
+      - name: transactions
+        description: >
+          Append-only staging table. Each import session inserts all parsed rows.
+          Re-uploading the same file adds new rows with a fresh imported_at timestamp.
+          txn_hash = md5(source|date|description|amount) is the natural dedup key.
+          content_hash = sha256(source|date|description|amount|row_index) is stable
+          per physical row.
+        columns:
+          - name: id
+            description: Surrogate primary key (UUID), generated on insert.
+            tests:
+              - unique
+              - not_null
+          - name: source
+            description: Origin of the transaction (e.g. "chase", "bofa").
+            tests:
+              - not_null
+              - accepted_values:
+                  values: ["chase", "bofa"]
+          - name: transaction_date
+            description: Date the transaction occurred.
+            tests:
+              - not_null
+          - name: post_date
+            description: Date the transaction posted (may be null for some sources).
+          - name: description
+            description: Normalized/cleaned transaction description.
+            tests:
+              - not_null
+          - name: original_description
+            description: Raw description as it appeared in the source CSV.
+            tests:
+              - not_null
+          - name: category
+            description: Assigned spending category.
+            tests:
+              - not_null
+          - name: category_overridden
+            description: True if the user manually overrode the auto-assigned category.
+            tests:
+              - not_null
+          - name: transaction_type
+            description: Type label from the source file (e.g. "Sale", "Return").
+          - name: amount
+            description: >
+              Transaction amount as a decimal. Positive = expense/debit,
+              negative = credit/refund. Matches the source convention.
+            tests:
+              - not_null
+          - name: memo
+            description: Optional memo field from the source CSV.
+          - name: running_balance
+            description: Account running balance at the time of the transaction, if provided.
+          - name: bill_id
+            description: FK to budgetlens.bills if this transaction has been linked to a bill.
+          - name: imported_at
+            description: Timestamp when this row was inserted during an import session.
+            tests:
+              - not_null
+          - name: content_hash
+            description: >
+              SHA-256 fingerprint computed as sha256(source|date|description|amount|row_index).
+              Stable per physical import row; NOT enforced as unique on the staging table.
+          - name: txn_hash
+            description: >
+              MD5 fingerprint computed as md5(source|date|description|amount). Natural
+              deduplication key — the same real-world transaction always produces the same
+              hash regardless of import order or file position.
+
+      - name: transaction_attributes
+        description: >
+          Mutable per-transaction state keyed by txn_hash. All app writes (category
+          overrides, bill links) land here instead of mutating the append-only staging
+          table. Joined into transactions_deduped via txn_hash.
+        columns:
+          - name: txn_hash
+            description: Natural key matching transactions.txn_hash.
+            tests:
+              - unique
+              - not_null
+          - name: category
+            description: User-overridden category, or null if no override exists.
+          - name: category_overridden
+            description: True when the user has explicitly set a category.
+            tests:
+              - not_null
+          - name: bill_id
+            description: FK to budgetlens.bills if this transaction has been linked to a bill.
+          - name: updated_at
+            description: Timestamp of the last attribute write.
+            tests:
+              - not_null
+
+models:
+  - name: transactions_deduped
+    description: >
+      Deduplicated canonical transaction table materialized by dbt. For each unique
+      txn_hash, keeps the most-recently-imported staging row and left-joins
+      transaction_attributes to surface category overrides and bill links.
+      This is the source of truth used by all downstream app queries.
+    config:
+      materialized: table
+    columns:
+      - name: id
+        description: UUID of the winning (most-recently-imported) row for this content_hash.
+        tests:
+          - unique
+          - not_null
+      - name: source
+        description: Origin of the transaction (e.g. "chase", "bofa").
+        tests:
+          - not_null
+          - accepted_values:
+              values: ["chase", "bofa"]
+      - name: transaction_date
+        description: Date the transaction occurred.
+        tests:
+          - not_null
+      - name: post_date
+        description: Date the transaction posted (may be null for some sources).
+      - name: description
+        description: Normalized/cleaned transaction description.
+        tests:
+          - not_null
+      - name: original_description
+        description: Raw description as it appeared in the source CSV.
+        tests:
+          - not_null
+      - name: category
+        description: Assigned spending category.
+        tests:
+          - not_null
+      - name: category_overridden
+        description: True if the user manually overrode the auto-assigned category.
+        tests:
+          - not_null
+      - name: transaction_type
+        description: Type label from the source file (e.g. "Sale", "Return").
+      - name: amount
+        description: >
+          Transaction amount as a decimal. Positive = expense/debit,
+          negative = credit/refund.
+        tests:
+          - not_null
+      - name: memo
+        description: Optional memo field from the source CSV.
+      - name: running_balance
+        description: Account running balance at the time of the transaction, if provided.
+      - name: bill_id
+        description: FK to budgetlens.bills if this transaction has been linked to a bill.
+      - name: imported_at
+        description: imported_at timestamp of the winning (latest) row for this content_hash.
+        tests:
+          - not_null
+      - name: txn_hash
+        description: >
+          Natural deduplication key. Exactly one row per txn_hash is present in
+          this model.
+        tests:
+          - unique
+          - not_null
+      - name: content_hash
+        description: SHA-256 fingerprint of the winning (most-recently-imported) staging row.

@@ -182,9 +182,13 @@ cython_debug/
 apps/chase_cc_ingestor/statements/*.csv
 apps/boa_ingestor/statements/**/*.csv
 
+# Claude Code worktrees (local session state, not project code)
+.claude/worktrees/
+
 
 # DBT
 dbt_project/target/
 dbt_project/dbt_packages/
 dbt_project/logs/
 dbt_project/seeds/
+apps/budgetlens/dbt/.user.yml
