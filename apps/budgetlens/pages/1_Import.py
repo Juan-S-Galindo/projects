@@ -136,6 +136,14 @@ if st.button("✅ Confirm Import", type="primary"):
                 all_ok = False
 
     dbt_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "dbt")
+    dbt_env = {
+        **os.environ,
+        "PGHOST":     os.environ.get("PGHOST", "localhost"),
+        "PGPORT":     os.environ.get("PGPORT", "5432"),
+        "PGUSER":     os.environ.get("PGUSER", "postgres"),
+        "PGPASSWORD": os.environ.get("PGPASSWORD", ""),
+        "PGDATABASE": os.environ.get("PGDATABASE", "expenses"),
+    }
     with st.spinner("Running dbt to refresh the deduplicated table…"):
         try:
             result = subprocess.run(
@@ -143,6 +151,7 @@ if st.button("✅ Confirm Import", type="primary"):
                 capture_output=True,
                 text=True,
                 timeout=120,
+                env=dbt_env,
             )
             dbt_output = result.stdout + result.stderr
             if result.returncode == 0:
