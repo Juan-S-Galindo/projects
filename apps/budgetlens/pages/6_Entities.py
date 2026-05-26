@@ -15,6 +15,19 @@ st.caption("Entities group bills, expenses, and income — track finances for an
 
 CADENCE_LABELS = {"monthly": "Monthly", "semi_monthly": "Semi-Monthly", "biweekly": "Biweekly"}
 
+_CADENCE_MONTHLY_FACTOR = {
+    "weekly":       52 / 12,
+    "bi_weekly":    26 / 12,
+    "biweekly":     26 / 12,
+    "semi_monthly": 2.0,
+    "monthly":      1.0,
+    "annual":       1 / 12,
+    "yearly":       1 / 12,
+}
+
+def cadence_to_monthly(amount: float, cadence: str) -> float:
+    return amount * _CADENCE_MONTHLY_FACTOR.get((cadence or "monthly").lower(), 1.0)
+
 # ── Load ───────────────────────────────────────────────────────────────────────
 
 try:
@@ -100,7 +113,10 @@ for df, kind in [(txn_sources_df, "txn"), (custom_sources_df, "custom")]:
             income_by_entity[eid].append({
                 "name": row["alias"] if kind == "txn" else row["name"],
                 "cadence": CADENCE_LABELS.get(row["cadence"], row["cadence"]),
+                "raw_cadence": row["cadence"],
+                "amount": float(row["amount"]) if kind == "custom" and row.get("amount") else None,
                 "active": row["active"],
+                "kind": kind,
             })
 
 expenses_by_entity: dict = {}
@@ -534,6 +550,42 @@ else:
                             st.markdown(f"- {src['name']}{active_tag} — {src['cadence']}")
 
                 st.markdown("---")
+
+            # ── Monthly totals ────────────────────────────────────────────────
+            entity_expenses_all = expenses_by_entity.get(eid, pd.DataFrame())
+
+            bills_monthly = float(
+                entity_bills[entity_bills["active"] == True]["monthly_equivalent"].sum()
+            ) if not entity_bills.empty else 0.0
+
+            exp_monthly = 0.0
+            if not entity_expenses_all.empty:
+                recurring_exp = entity_expenses_all[entity_expenses_all["is_recurring"] == True]
+                for _, ex in recurring_exp.iterrows():
+                    if ex.get("active", True):
+                        exp_monthly += monthly_equivalent(
+                            float(ex["amount"]),
+                            ex.get("frequency") or "months",
+                            int(ex.get("frequency_count") or 1),
+                        )
+
+            income_monthly = sum(
+                cadence_to_monthly(src["amount"], src["raw_cadence"])
+                for src in entity_income
+                if src.get("active") and src.get("kind") == "custom" and src.get("amount")
+            )
+
+            total_expenses = bills_monthly + exp_monthly
+            net = income_monthly - total_expenses
+
+            mc1, mc2, mc3, mc4 = st.columns(4)
+            mc1.metric("Bills/mo", f"${bills_monthly:,.2f}")
+            mc2.metric("Expenses/mo", f"${exp_monthly:,.2f}")
+            mc3.metric("Income/mo", f"${income_monthly:,.2f}")
+            net_label = f"{'+ ' if net >= 0 else '− '}${abs(net):,.2f}"
+            mc4.metric("Net/mo", net_label, delta=f"{'surplus' if net >= 0 else 'deficit'}")
+
+            st.markdown("---")
 
             exp_tab, txn_tab, settings_tab = st.tabs(
                 ["Expenses", "Linked Transactions", "Entity Settings"]
