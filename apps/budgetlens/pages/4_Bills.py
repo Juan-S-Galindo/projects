@@ -165,29 +165,33 @@ def render_bill_card(b):
                 matched_reset = matched.reset_index(drop=True)
                 included_mask_stored = ~matched_reset["content_hash"].isin(excluded_hashes)
 
-                # Apply select/deselect-all override if one was requested last run
+                # Stable base: keep Include state in session_state so the
+                # data_editor delta is always applied to the same base, preventing
+                # "all rows re-select" when the base changes between reruns.
+                base_key = f"include_base_{bill_id}"
                 override_key = f"include_override_{bill_id}"
                 override = st.session_state.pop(override_key, None)
+
+                if override is not None:
+                    st.session_state[base_key] = [override] * len(matched_reset)
+                    st.session_state.pop(f"txn_editor_{bill_id}", None)
+                elif base_key not in st.session_state:
+                    st.session_state[base_key] = included_mask_stored.values.tolist()
 
                 _sa, _da, _ = st.columns([1, 1, 8])
                 with _sa:
                     if st.button("Select All", key=f"sel_all_{bill_id}", use_container_width=True):
                         st.session_state[override_key] = True
-                        st.session_state.pop(f"txn_editor_{bill_id}", None)
                         st.rerun()
                 with _da:
                     if st.button("Deselect All", key=f"desel_all_{bill_id}", use_container_width=True):
                         st.session_state[override_key] = False
-                        st.session_state.pop(f"txn_editor_{bill_id}", None)
                         st.rerun()
 
                 txn_display = matched_reset[["transaction_date", "description", "amount"]].copy()
                 txn_display["transaction_date"] = txn_display["transaction_date"].astype(str)
                 txn_display["amount"] = txn_display["amount"].abs().astype(float)
-                if override is not None:
-                    txn_display["Include"] = override
-                else:
-                    txn_display["Include"] = included_mask_stored.values
+                txn_display["Include"] = st.session_state[base_key]
                 txn_display = txn_display.rename(columns={
                     "transaction_date": "Date",
                     "description": "Description",
@@ -481,22 +485,27 @@ if add_filter_value and not txns_all.empty:
 
         st.markdown("**Matching Transactions** — uncheck to exclude from the average")
 
+        _add_base_key = f"add_include_base_{_gen}"
         _add_override_key = "add_include_override"
         _add_override = st.session_state.pop(_add_override_key, None)
+
+        if _add_override is not None:
+            st.session_state[_add_base_key] = [_add_override] * len(txn_add_display)
+            st.session_state.pop(f"add_preview_editor_{_gen}", None)
+        elif _add_base_key not in st.session_state:
+            st.session_state[_add_base_key] = [True] * len(txn_add_display)
+
+        txn_add_display["Include"] = st.session_state[_add_base_key]
+
         _asa, _ada, _ = st.columns([1, 1, 8])
         with _asa:
             if st.button("Select All", key="add_sel_all", use_container_width=True):
                 st.session_state[_add_override_key] = True
-                st.session_state.pop(f"add_preview_editor_{_gen}", None)
                 st.rerun()
         with _ada:
             if st.button("Deselect All", key="add_desel_all", use_container_width=True):
                 st.session_state[_add_override_key] = False
-                st.session_state.pop(f"add_preview_editor_{_gen}", None)
                 st.rerun()
-
-        if _add_override is not None:
-            txn_add_display["Include"] = _add_override
 
         add_preview_df = st.data_editor(
             txn_add_display,
