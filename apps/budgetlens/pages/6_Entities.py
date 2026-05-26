@@ -131,59 +131,78 @@ def render_expenses_tab(eid: str, expenses: pd.DataFrame):
             cnt = int(ex.get("frequency_count") or 1)
             me = monthly_equivalent(float(ex["amount"]), freq, cnt)
             active_tag = "" if ex["active"] else " *(inactive)*"
+            edit_key = f"edit_ex_{ex_id}"
 
-            with st.expander(
-                f"↺ **{ex['name']}**{active_tag} — "
-                f"${float(ex['amount']):,.2f} {frequency_label(freq, cnt)} → **${me:,.2f}/mo**",
-                expanded=False,
-            ):
-                c1, c2, c3 = st.columns(3)
-                with c1:
-                    new_name = st.text_input("Name", value=ex["name"], key=f"ex_name_{ex_id}")
-                    new_active = st.checkbox("Active", value=bool(ex["active"]), key=f"ex_active_{ex_id}")
-                with c2:
-                    new_amount = st.number_input(
-                        "Amount ($)", value=float(ex["amount"]), min_value=0.01, key=f"ex_amt_{ex_id}"
-                    )
-                    new_cat = st.selectbox(
-                        "Category",
-                        ALL_CATEGORIES,
-                        index=ALL_CATEGORIES.index(ex["category"]) if ex["category"] in ALL_CATEGORIES else 0,
-                        format_func=lambda c: CATEGORY_LABELS.get(c, c),
-                        key=f"ex_cat_{ex_id}",
-                    )
-                with c3:
-                    rc1, rc2 = st.columns(2)
-                    with rc1:
-                        new_cnt = st.number_input(
-                            "Every", value=cnt, min_value=1, step=1, key=f"ex_cnt_{ex_id}"
+            row_l, row_r = st.columns([8, 2])
+            with row_l:
+                st.markdown(
+                    f"↺ **{ex['name'].strip()}**{active_tag} — "
+                    f"${float(ex['amount']):,.2f} {frequency_label(freq, cnt)} → **${me:,.2f}/mo**"
+                )
+            with row_r:
+                btn_e, btn_d = st.columns(2)
+                with btn_e:
+                    if st.button("✏️ Edit", key=f"ex_edit_btn_{ex_id}", use_container_width=True):
+                        st.session_state[edit_key] = not st.session_state.get(edit_key, False)
+                with btn_d:
+                    if st.button("🗑️", key=f"ex_del_{ex_id}", use_container_width=True):
+                        try:
+                            with get_engine().begin() as conn:
+                                conn.execute(
+                                    text("DELETE FROM budgetlens.entity_expenses WHERE id=:id"),
+                                    {"id": ex_id},
+                                )
+                            st.rerun()
+                        except Exception as err:
+                            st.error(f"Delete failed: {err}")
+
+            if st.session_state.get(edit_key, False):
+                with st.container():
+                    c1, c2, c3 = st.columns(3)
+                    with c1:
+                        new_name = st.text_input("Name", value=ex["name"], key=f"ex_name_{ex_id}")
+                        new_active = st.checkbox("Active", value=bool(ex["active"]), key=f"ex_active_{ex_id}")
+                    with c2:
+                        new_amount = st.number_input(
+                            "Amount ($)", value=float(ex["amount"]), min_value=0.01, key=f"ex_amt_{ex_id}"
                         )
-                    with rc2:
-                        new_freq = st.selectbox(
-                            "Period",
-                            list(PERIOD_UNITS.keys()),
-                            index=list(PERIOD_UNITS.keys()).index(freq) if freq in PERIOD_UNITS else 1,
-                            format_func=lambda u: PERIOD_UNITS[u],
-                            key=f"ex_freq_{ex_id}",
+                        new_cat = st.selectbox(
+                            "Category",
+                            ALL_CATEGORIES,
+                            index=ALL_CATEGORIES.index(ex["category"]) if ex["category"] in ALL_CATEGORIES else 0,
+                            format_func=lambda c: CATEGORY_LABELS.get(c, c),
+                            key=f"ex_cat_{ex_id}",
                         )
-                    sd_val = ex["start_date"]
-                    if hasattr(sd_val, "date"):
-                        sd_val = sd_val.date()
-                    new_start = st.date_input(
-                        "Start date",
-                        value=sd_val if sd_val else date.today(),
-                        key=f"ex_start_{ex_id}",
-                    )
-                    new_notes = st.text_input(
-                        "Notes", value=ex.get("notes") or "", key=f"ex_notes_{ex_id}"
-                    )
+                    with c3:
+                        rc1, rc2 = st.columns(2)
+                        with rc1:
+                            new_cnt = st.number_input(
+                                "Every", value=cnt, min_value=1, step=1, key=f"ex_cnt_{ex_id}"
+                            )
+                        with rc2:
+                            new_freq = st.selectbox(
+                                "Period",
+                                list(PERIOD_UNITS.keys()),
+                                index=list(PERIOD_UNITS.keys()).index(freq) if freq in PERIOD_UNITS else 1,
+                                format_func=lambda u: PERIOD_UNITS[u],
+                                key=f"ex_freq_{ex_id}",
+                            )
+                        sd_val = ex["start_date"]
+                        if hasattr(sd_val, "date"):
+                            sd_val = sd_val.date()
+                        new_start = st.date_input(
+                            "Start date",
+                            value=sd_val if sd_val else date.today(),
+                            key=f"ex_start_{ex_id}",
+                        )
+                        new_notes = st.text_input(
+                            "Notes", value=ex.get("notes") or "", key=f"ex_notes_{ex_id}"
+                        )
 
-                new_me = monthly_equivalent(new_amount, new_freq, new_cnt)
-                st.info(f"Monthly equivalent: **${new_me:,.2f}/month**")
+                    new_me = monthly_equivalent(new_amount, new_freq, new_cnt)
+                    st.info(f"Monthly equivalent: **${new_me:,.2f}/month**")
 
-                s1, s2 = st.columns([1, 1])
-                with s1:
-                    if st.button("💾 Save", key=f"ex_save_{ex_id}"):
+                    if st.button("💾 Save", key=f"ex_save_{ex_id}", type="primary"):
                         try:
                             with get_engine().begin() as conn:
                                 conn.execute(
@@ -198,22 +217,10 @@ def render_expenses_tab(eid: str, expenses: pd.DataFrame):
                                      "cnt": new_cnt, "sd": new_start, "cat": new_cat,
                                      "notes": new_notes or None, "active": new_active, "id": ex_id},
                                 )
-                            st.success("Saved.")
+                            st.session_state.pop(edit_key, None)
                             st.rerun()
                         except Exception as err:
                             st.error(f"Save failed: {err}")
-                with s2:
-                    if st.button("🗑️ Delete", key=f"ex_del_{ex_id}"):
-                        try:
-                            with get_engine().begin() as conn:
-                                conn.execute(
-                                    text("DELETE FROM budgetlens.entity_expenses WHERE id=:id"),
-                                    {"id": ex_id},
-                                )
-                            st.success("Deleted.")
-                            st.rerun()
-                        except Exception as err:
-                            st.error(f"Delete failed: {err}")
 
     st.markdown("---")
     st.markdown("**One-Time Expenses**")
@@ -226,33 +233,50 @@ def render_expenses_tab(eid: str, expenses: pd.DataFrame):
             if hasattr(exp_date, "date"):
                 exp_date = exp_date.date()
             exp_date = exp_date or date.today()
+            edit_key = f"edit_ex_{ex_id}"
 
-            with st.expander(
-                f"◆ **{ex['name']}** — ${float(ex['amount']):,.2f} on {exp_date}",
-                expanded=False,
-            ):
-                c1, c2 = st.columns(2)
-                with c1:
-                    new_name = st.text_input("Name", value=ex["name"], key=f"ex_name_{ex_id}")
-                    new_amount = st.number_input(
-                        "Amount ($)", value=float(ex["amount"]), min_value=0.01, key=f"ex_amt_{ex_id}"
-                    )
-                with c2:
-                    new_date = st.date_input("Date", value=exp_date, key=f"ex_date_{ex_id}")
-                    new_cat = st.selectbox(
-                        "Category",
-                        ALL_CATEGORIES,
-                        index=ALL_CATEGORIES.index(ex["category"]) if ex["category"] in ALL_CATEGORIES else 0,
-                        format_func=lambda c: CATEGORY_LABELS.get(c, c),
-                        key=f"ex_cat_{ex_id}",
-                    )
-                new_notes = st.text_input(
-                    "Notes", value=ex.get("notes") or "", key=f"ex_notes_{ex_id}"
-                )
+            row_l, row_r = st.columns([8, 2])
+            with row_l:
+                st.markdown(f"◆ **{ex['name'].strip()}** — ${float(ex['amount']):,.2f} on {exp_date}")
+            with row_r:
+                btn_e, btn_d = st.columns(2)
+                with btn_e:
+                    if st.button("✏️ Edit", key=f"ex_edit_btn_{ex_id}", use_container_width=True):
+                        st.session_state[edit_key] = not st.session_state.get(edit_key, False)
+                with btn_d:
+                    if st.button("🗑️", key=f"ex_del_{ex_id}", use_container_width=True):
+                        try:
+                            with get_engine().begin() as conn:
+                                conn.execute(
+                                    text("DELETE FROM budgetlens.entity_expenses WHERE id=:id"),
+                                    {"id": ex_id},
+                                )
+                            st.rerun()
+                        except Exception as err:
+                            st.error(f"Delete failed: {err}")
 
-                s1, s2 = st.columns([1, 1])
-                with s1:
-                    if st.button("💾 Save", key=f"ex_save_{ex_id}"):
+            if st.session_state.get(edit_key, False):
+                with st.container():
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        new_name = st.text_input("Name", value=ex["name"], key=f"ex_name_{ex_id}")
+                        new_amount = st.number_input(
+                            "Amount ($)", value=float(ex["amount"]), min_value=0.01, key=f"ex_amt_{ex_id}"
+                        )
+                    with c2:
+                        new_date = st.date_input("Date", value=exp_date, key=f"ex_date_{ex_id}")
+                        new_cat = st.selectbox(
+                            "Category",
+                            ALL_CATEGORIES,
+                            index=ALL_CATEGORIES.index(ex["category"]) if ex["category"] in ALL_CATEGORIES else 0,
+                            format_func=lambda c: CATEGORY_LABELS.get(c, c),
+                            key=f"ex_cat_{ex_id}",
+                        )
+                    new_notes = st.text_input(
+                        "Notes", value=ex.get("notes") or "", key=f"ex_notes_{ex_id}"
+                    )
+
+                    if st.button("💾 Save", key=f"ex_save_{ex_id}", type="primary"):
                         try:
                             with get_engine().begin() as conn:
                                 conn.execute(
@@ -265,22 +289,10 @@ def render_expenses_tab(eid: str, expenses: pd.DataFrame):
                                     {"name": new_name, "amt": new_amount, "edate": new_date,
                                      "cat": new_cat, "notes": new_notes or None, "id": ex_id},
                                 )
-                            st.success("Saved.")
+                            st.session_state.pop(edit_key, None)
                             st.rerun()
                         except Exception as err:
                             st.error(f"Save failed: {err}")
-                with s2:
-                    if st.button("🗑️ Delete", key=f"ex_del_{ex_id}"):
-                        try:
-                            with get_engine().begin() as conn:
-                                conn.execute(
-                                    text("DELETE FROM budgetlens.entity_expenses WHERE id=:id"),
-                                    {"id": ex_id},
-                                )
-                            st.success("Deleted.")
-                            st.rerun()
-                        except Exception as err:
-                            st.error(f"Delete failed: {err}")
 
     st.markdown("---")
     st.markdown("**Add Expense**")
