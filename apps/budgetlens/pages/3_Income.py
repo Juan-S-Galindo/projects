@@ -71,8 +71,8 @@ try:
             conn,
         )
 
-        profiles = pd.read_sql(
-            text("SELECT id, name, is_default FROM budgetlens.profiles ORDER BY is_default DESC, name"),
+        entities = pd.read_sql(
+            text("SELECT id, name, is_default FROM budgetlens.entities ORDER BY is_default DESC, name"),
             conn,
         )
 
@@ -84,11 +84,11 @@ except Exception as e:
     st.error(f"Database error: {e}")
     st.stop()
 
-profile_map = {str(r["id"]): r["name"] for _, r in profiles.iterrows()}
-profile_options = [None] + [str(r["id"]) for _, r in profiles.iterrows()]
-profile_labels = {None: "— No profile —", **profile_map}
-default_profile_id = next(
-    (str(r["id"]) for _, r in profiles.iterrows() if r["is_default"]), None
+entity_map = {str(r["id"]): r["name"] for _, r in entities.iterrows()}
+entity_options = [None] + [str(r["id"]) for _, r in entities.iterrows()]
+entity_labels = {None: "— No entity —", **entity_map}
+default_entity_id = next(
+    (str(r["id"]) for _, r in entities.iterrows() if r["is_default"]), None
 )
 
 excluded_by_source: dict[str, set[str]] = {}
@@ -133,7 +133,7 @@ def render_txn_source(src) -> float:
     filter_value = src.get("filter_value") or ""
     cadence = src.get("cadence") or default_cadence
     amount_override = src.get("amount_override")
-    cur_profile = str(src["profile_id"]) if src.get("profile_id") and not pd.isna(src.get("profile_id")) else None
+    cur_entity = str(src["entity_id"]) if src.get("entity_id") and not pd.isna(src.get("entity_id")) else None
 
     matched = apply_filter(txns_all, filter_type, filter_value) if filter_value else pd.DataFrame()
     excluded_hashes = excluded_by_source.get(src_id, set())
@@ -200,12 +200,12 @@ def render_txn_source(src) -> float:
         s1, s2, s3 = st.columns(3)
         with s1:
             new_alias = st.text_input("Alias", value=src["alias"], key=f"src_alias_{src_id}")
-            new_profile = st.selectbox(
-                "Profile",
-                profile_options,
-                index=profile_options.index(cur_profile) if cur_profile in profile_options else 0,
-                format_func=lambda pid: profile_labels.get(pid, "— No profile —"),
-                key=f"src_profile_{src_id}",
+            new_entity = st.selectbox(
+                "Entity",
+                entity_options,
+                index=entity_options.index(cur_entity) if cur_entity in entity_options else 0,
+                format_func=lambda eid: entity_labels.get(eid, "— No entity —"),
+                key=f"src_entity_{src_id}",
             )
         with s2:
             new_filter_type = st.selectbox(
@@ -261,13 +261,13 @@ def render_txn_source(src) -> float:
                                 UPDATE budgetlens.income_transaction_sources
                                 SET alias = :alias, filter_type = :ftype, filter_value = :fval,
                                     cadence = :cad, amount_override = :ovr,
-                                    active = :active, profile_id = :pid
+                                    active = :active, entity_id = :eid
                                 WHERE id = :id
                             """),
                             {"alias": new_alias, "ftype": new_filter_type,
                              "fval": new_filter_value or None, "cad": new_cadence,
                              "ovr": new_override, "active": new_active,
-                             "pid": new_profile, "id": src_id},
+                             "eid": new_entity, "id": src_id},
                         )
                         if txn_edited is not None and not matched_reset.empty:
                             group_hashes = matched_reset["content_hash"].tolist()
@@ -307,7 +307,7 @@ def render_txn_source(src) -> float:
     return monthly
 
 
-# ── Income sources grouped by profile ─────────────────────────────────────────
+# ── Income sources grouped by entity ──────────────────────────────────────────
 
 total_monthly_sources = 0.0
 
@@ -316,27 +316,27 @@ st.subheader("Income Sources")
 if sources_df.empty:
     st.info("No income sources configured yet. Add one below.")
 else:
-    sources_df["_pid"] = sources_df["profile_id"].apply(
+    sources_df["_eid"] = sources_df["entity_id"].apply(
         lambda x: str(x) if x and not pd.isna(x) else None
     )
-    unlinked = sources_df[sources_df["_pid"].isna()]
+    unlinked = sources_df[sources_df["_eid"].isna()]
 
-    tab_profiles = [
-        p for _, p in profiles.iterrows()
-        if not sources_df[sources_df["_pid"] == str(p["id"])].empty
+    tab_entities = [
+        e for _, e in entities.iterrows()
+        if not sources_df[sources_df["_eid"] == str(e["id"])].empty
     ]
     tab_names = [
-        f"{'🏷️ ' if p['is_default'] else ''}{p['name']}"
-        for p in tab_profiles
+        f"{'🏷️ ' if e['is_default'] else ''}{e['name']}"
+        for e in tab_entities
     ]
     if not unlinked.empty:
         tab_names.append("Uncategorized")
 
     if tab_names:
         tabs = st.tabs(tab_names)
-        for tab, p in zip(tabs[:len(tab_profiles)], tab_profiles):
+        for tab, e in zip(tabs[:len(tab_entities)], tab_entities):
             with tab:
-                group = sources_df[sources_df["_pid"] == str(p["id"])]
+                group = sources_df[sources_df["_eid"] == str(e["id"])]
                 for _, src in group.iterrows():
                     total_monthly_sources += render_txn_source(src)
         if not unlinked.empty:
@@ -362,12 +362,12 @@ with a1:
     add_alias = st.text_input(
         "Alias *", placeholder="e.g. Employer Payroll", key=f"add_alias_{_gen}"
     )
-    add_profile = st.selectbox(
-        "Profile",
-        profile_options,
-        index=profile_options.index(default_profile_id) if default_profile_id in profile_options else 0,
-        format_func=lambda pid: profile_labels.get(pid, "— No profile —"),
-        key=f"add_src_profile_{_gen}",
+    add_entity = st.selectbox(
+        "Entity",
+        entity_options,
+        index=entity_options.index(default_entity_id) if default_entity_id in entity_options else 0,
+        format_func=lambda eid: entity_labels.get(eid, "— No entity —"),
+        key=f"add_src_entity_{_gen}",
     )
 with a2:
     add_filter_type = st.selectbox(
@@ -447,13 +447,13 @@ with btn1:
                     result = conn.execute(
                         text("""
                             INSERT INTO budgetlens.income_transaction_sources
-                                (alias, filter_type, filter_value, cadence, profile_id)
-                            VALUES (:alias, :ftype, :fval, :cad, :pid)
+                                (alias, filter_type, filter_value, cadence, entity_id)
+                            VALUES (:alias, :ftype, :fval, :cad, :eid)
                             RETURNING id
                         """),
                         {"alias": add_alias, "ftype": add_filter_type,
                          "fval": add_filter_value, "cad": add_cadence,
-                         "pid": add_profile},
+                         "eid": add_entity},
                     )
                     new_src_id = str(result.fetchone()[0])
 

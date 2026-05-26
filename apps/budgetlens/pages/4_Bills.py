@@ -63,8 +63,8 @@ try:
             text("SELECT * FROM budgetlens.bills ORDER BY active DESC, name"),
             conn,
         )
-        profiles = pd.read_sql(
-            text("SELECT id, name, is_default FROM budgetlens.profiles ORDER BY is_default DESC, name"),
+        entities = pd.read_sql(
+            text("SELECT id, name, is_default FROM budgetlens.entities ORDER BY is_default DESC, name"),
             conn,
         )
         txns_all = pd.read_sql(
@@ -84,11 +84,11 @@ except Exception as e:
     st.error(f"Database error: {e}")
     st.stop()
 
-profile_map = {str(r["id"]): r["name"] for _, r in profiles.iterrows()}
-profile_options = [None] + [str(r["id"]) for _, r in profiles.iterrows()]
-profile_labels = {None: "— No profile —", **profile_map}
-default_profile_id = next(
-    (str(r["id"]) for _, r in profiles.iterrows() if r["is_default"]), None
+entity_map = {str(r["id"]): r["name"] for _, r in entities.iterrows()}
+entity_options = [None] + [str(r["id"]) for _, r in entities.iterrows()]
+entity_labels = {None: "— No entity —", **entity_map}
+default_entity_id = next(
+    (str(r["id"]) for _, r in entities.iterrows() if r["is_default"]), None
 )
 
 excluded_by_bill: dict[str, set[str]] = {}
@@ -201,13 +201,13 @@ def render_bill_card(b):
         with e1:
             new_name = st.text_input("Name", value=b["name"], key=f"bname_{bill_id}")
             new_active = st.checkbox("Active", value=bool(b["active"]), key=f"bactive_{bill_id}")
-            cur_profile = str(b["profile_id"]) if b.get("profile_id") and not pd.isna(b.get("profile_id")) else None
-            new_profile = st.selectbox(
-                "Profile",
-                profile_options,
-                index=profile_options.index(cur_profile) if cur_profile in profile_options else 0,
-                format_func=lambda pid: profile_labels.get(pid, "— No profile —"),
-                key=f"bprofile_{bill_id}",
+            cur_entity = str(b["entity_id"]) if b.get("entity_id") and not pd.isna(b.get("entity_id")) else None
+            new_entity = st.selectbox(
+                "Entity",
+                entity_options,
+                index=entity_options.index(cur_entity) if cur_entity in entity_options else 0,
+                format_func=lambda eid: entity_labels.get(eid, "— No entity —"),
+                key=f"bentity_{bill_id}",
             )
         with e2:
             new_filter_type = st.selectbox(
@@ -306,7 +306,7 @@ def render_bill_card(b):
                                     frequency_count = :cnt, amount = :amt,
                                     monthly_equivalent = :me, active = :active,
                                     filter_type = :ftype, filter_value = :fval,
-                                    aggregation_method = :agg, profile_id = :pid,
+                                    aggregation_method = :agg, entity_id = :eid,
                                     last_charge_date = :lcd, next_charge_date = :ncd
                                 WHERE id = :id
                             """),
@@ -314,7 +314,7 @@ def render_bill_card(b):
                              "cnt": new_count, "amt": stored_amount, "me": me_preview,
                              "active": new_active, "ftype": new_filter_type,
                              "fval": new_filter_value or None, "agg": new_agg,
-                             "pid": new_profile, "lcd": new_last, "ncd": new_ncd,
+                             "eid": new_entity, "lcd": new_last, "ncd": new_ncd,
                              "id": bill_id},
                         )
                         if txn_edited is not None and not matched_reset.empty:
@@ -352,32 +352,32 @@ def render_bill_card(b):
                     st.error(f"Delete failed: {e}")
 
 
-# ── Bills grouped by profile ───────────────────────────────────────────────────
+# ── Bills grouped by entity ────────────────────────────────────────────────────
 
 if bills.empty:
     st.info("No bills configured yet. Add one below.")
 else:
-    bills["_pid"] = bills["profile_id"].apply(
+    bills["_eid"] = bills["entity_id"].apply(
         lambda x: str(x) if x and not pd.isna(x) else None
     )
-    unlinked = bills[bills["_pid"].isna()]
+    unlinked = bills[bills["_eid"].isna()]
 
-    tab_profiles = [
-        p for _, p in profiles.iterrows()
-        if not bills[bills["_pid"] == str(p["id"])].empty
+    tab_entities = [
+        e for _, e in entities.iterrows()
+        if not bills[bills["_eid"] == str(e["id"])].empty
     ]
     tab_names = [
-        f"{'🏷️ ' if p['is_default'] else ''}{p['name']}"
-        for p in tab_profiles
+        f"{'🏷️ ' if e['is_default'] else ''}{e['name']}"
+        for e in tab_entities
     ]
     if not unlinked.empty:
         tab_names.append("Uncategorized")
 
     if tab_names:
         tabs = st.tabs(tab_names)
-        for tab, p in zip(tabs[:len(tab_profiles)], tab_profiles):
+        for tab, e in zip(tabs[:len(tab_entities)], tab_entities):
             with tab:
-                group = bills[bills["_pid"] == str(p["id"])]
+                group = bills[bills["_eid"] == str(e["id"])]
                 monthly_sum = float(group[group["active"] == True]["monthly_equivalent"].sum())
                 st.caption(f"{len(group)} bill(s) · ${monthly_sum:,.2f}/month committed")
                 for _, b in group.iterrows():
@@ -411,12 +411,12 @@ with a1:
         format_func=lambda c: CATEGORY_LABELS.get(c, c),
         key=f"add_cat_{_gen}",
     )
-    add_profile = st.selectbox(
-        "Profile",
-        profile_options,
-        index=profile_options.index(default_profile_id) if default_profile_id in profile_options else 0,
-        format_func=lambda pid: profile_labels.get(pid, "— No profile —"),
-        key=f"add_profile_{_gen}",
+    add_entity = st.selectbox(
+        "Entity",
+        entity_options,
+        index=entity_options.index(default_entity_id) if default_entity_id in entity_options else 0,
+        format_func=lambda eid: entity_labels.get(eid, "— No entity —"),
+        key=f"add_entity_{_gen}",
     )
 with a2:
     add_filter_type = st.selectbox(
@@ -525,16 +525,16 @@ with btn1:
                             INSERT INTO budgetlens.bills
                                 (name, category, frequency, frequency_count, amount,
                                  monthly_equivalent, start_date, last_charge_date, next_charge_date,
-                                 notes, filter_type, filter_value, aggregation_method, profile_id)
+                                 notes, filter_type, filter_value, aggregation_method, entity_id)
                             VALUES
                                 (:name, :cat, :unit, :cnt, :amt, :me, :sd, :lcd, :ncd,
-                                 :notes, :ftype, :fval, :agg, :pid)
+                                 :notes, :ftype, :fval, :agg, :eid)
                             RETURNING id
                         """),
                         {"name": add_name, "cat": add_cat, "unit": add_unit, "cnt": add_count,
                          "amt": amount, "me": me, "sd": first_dt, "lcd": last_dt, "ncd": ncd,
                          "notes": add_notes or None, "ftype": add_filter_type,
-                         "fval": add_filter_value, "agg": add_agg, "pid": add_profile},
+                         "fval": add_filter_value, "agg": add_agg, "eid": add_entity},
                     )
                     new_bill_id = str(result.fetchone()[0])
 

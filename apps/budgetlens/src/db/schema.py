@@ -169,23 +169,85 @@ CREATE TABLE IF NOT EXISTS budgetlens.bill_excluded_hashes (
 );
 """
 
-PROFILE_MIGRATION = """
-CREATE TABLE IF NOT EXISTS budgetlens.profiles (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name        TEXT    NOT NULL,
-    description TEXT,
-    is_default  BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+ENTITY_MIGRATION = """
+DO $$
+BEGIN
+    -- Create entities table if not already done
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_tables WHERE schemaname = 'budgetlens' AND tablename = 'entities'
+    ) THEN
+        CREATE TABLE budgetlens.entities (
+            id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            name        TEXT    NOT NULL,
+            description TEXT,
+            is_default  BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+    END IF;
+
+    -- Migrate from profiles table if it still exists (old schema)
+    IF EXISTS (
+        SELECT 1 FROM pg_tables WHERE schemaname = 'budgetlens' AND tablename = 'profiles'
+    ) THEN
+        INSERT INTO budgetlens.entities (id, name, description, is_default, created_at)
+        SELECT id, name, description, is_default, created_at FROM budgetlens.profiles
+        ON CONFLICT (id) DO NOTHING;
+
+        ALTER TABLE budgetlens.bills
+            ADD COLUMN IF NOT EXISTS entity_id UUID REFERENCES budgetlens.entities(id) ON DELETE SET NULL;
+        ALTER TABLE budgetlens.income_transaction_sources
+            ADD COLUMN IF NOT EXISTS entity_id UUID REFERENCES budgetlens.entities(id) ON DELETE SET NULL;
+        ALTER TABLE budgetlens.income_sources
+            ADD COLUMN IF NOT EXISTS entity_id UUID REFERENCES budgetlens.entities(id) ON DELETE SET NULL;
+
+        UPDATE budgetlens.bills SET entity_id = profile_id WHERE entity_id IS NULL AND profile_id IS NOT NULL;
+        UPDATE budgetlens.income_transaction_sources SET entity_id = profile_id WHERE entity_id IS NULL AND profile_id IS NOT NULL;
+        UPDATE budgetlens.income_sources SET entity_id = profile_id WHERE entity_id IS NULL AND profile_id IS NOT NULL;
+
+        ALTER TABLE budgetlens.bills DROP COLUMN IF EXISTS profile_id;
+        ALTER TABLE budgetlens.income_transaction_sources DROP COLUMN IF EXISTS profile_id;
+        ALTER TABLE budgetlens.income_sources DROP COLUMN IF EXISTS profile_id;
+
+        DROP TABLE budgetlens.profiles;
+    END IF;
+
+    -- Ensure entity_id columns exist (fresh installs where profiles never existed)
+    ALTER TABLE budgetlens.bills
+        ADD COLUMN IF NOT EXISTS entity_id UUID REFERENCES budgetlens.entities(id) ON DELETE SET NULL;
+    ALTER TABLE budgetlens.income_transaction_sources
+        ADD COLUMN IF NOT EXISTS entity_id UUID REFERENCES budgetlens.entities(id) ON DELETE SET NULL;
+    ALTER TABLE budgetlens.income_sources
+        ADD COLUMN IF NOT EXISTS entity_id UUID REFERENCES budgetlens.entities(id) ON DELETE SET NULL;
+END
+$$;
+
+-- Manual expenses per entity (recurring and one-time, outside bank transactions)
+CREATE TABLE IF NOT EXISTS budgetlens.entity_expenses (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    entity_id       UUID REFERENCES budgetlens.entities(id) ON DELETE CASCADE,
+    name            TEXT          NOT NULL,
+    amount          NUMERIC(12,2) NOT NULL,
+    is_recurring    BOOLEAN       NOT NULL DEFAULT FALSE,
+    frequency       VARCHAR(20),
+    frequency_count INTEGER       NOT NULL DEFAULT 1,
+    expense_date    DATE,
+    start_date      DATE,
+    end_date        DATE,
+    category        VARCHAR(50)   NOT NULL DEFAULT 'uncategorized',
+    notes           TEXT,
+    active          BOOLEAN       NOT NULL DEFAULT TRUE,
+    created_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW()
 );
 
-ALTER TABLE budgetlens.bills
-    ADD COLUMN IF NOT EXISTS profile_id UUID REFERENCES budgetlens.profiles(id) ON DELETE SET NULL;
-
-ALTER TABLE budgetlens.income_transaction_sources
-    ADD COLUMN IF NOT EXISTS profile_id UUID REFERENCES budgetlens.profiles(id) ON DELETE SET NULL;
-
-ALTER TABLE budgetlens.income_sources
-    ADD COLUMN IF NOT EXISTS profile_id UUID REFERENCES budgetlens.profiles(id) ON DELETE SET NULL;
+-- One-time transaction links: attach specific bank transactions to an entity
+CREATE TABLE IF NOT EXISTS budgetlens.entity_transaction_links (
+    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    entity_id      UUID NOT NULL REFERENCES budgetlens.entities(id) ON DELETE CASCADE,
+    transaction_id UUID NOT NULL REFERENCES budgetlens.transactions(id) ON DELETE CASCADE,
+    notes          TEXT,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (entity_id, transaction_id)
+);
 """
 
 
@@ -201,4 +263,4 @@ def init_schema(engine):
     _run(FREQUENCY_MIGRATION)
     _run(INCOME_MIGRATION)
     _run(BILL_FILTER_MIGRATION)
-    _run(PROFILE_MIGRATION)
+    _run(ENTITY_MIGRATION)
