@@ -97,30 +97,30 @@ if not excluded_df.empty:
         excluded_by_source[sid] = set(grp["content_hash"].tolist())
 
 
-# ── Default Pay Cadence ───────────────────────────────────────────────────────
+# ── Pre-compute totals for metric ─────────────────────────────────────────────
 
-st.subheader("Default Pay Cadence")
-st.caption("Applied to income sources that don't have their own cadence set.")
+# Transaction sources: use amount_override if set, else 0 (live avg requires matching)
+txn_sources_monthly_precomputed = 0.0
+if not sources_df.empty:
+    for _, src in sources_df.iterrows():
+        if not src["active"]:
+            continue
+        cadence = src.get("cadence") or default_cadence
+        amount_override = src.get("amount_override")
+        if amount_override is not None:
+            txn_sources_monthly_precomputed += monthly_from_cadence(float(amount_override), cadence)
 
-new_default_cadence = st.selectbox(
-    "Default Cadence",
-    list(CADENCE_OPTIONS.keys()),
-    index=list(CADENCE_OPTIONS.keys()).index(default_cadence),
-    format_func=lambda c: CADENCE_OPTIONS[c]["label"],
-    key="default_cadence_select",
-)
-if new_default_cadence != default_cadence:
-    try:
-        with get_engine().begin() as conn:
-            conn.execute(
-                text("UPDATE budgetlens.settings SET value = :v WHERE key = 'pay_cadence'"),
-                {"v": new_default_cadence},
-            )
-        default_cadence = new_default_cadence
-        st.success("Default cadence updated.")
-    except Exception as e:
-        st.error(f"Failed to save: {e}")
+# Custom sources: always have amount + cadence in DB
+custom_monthly_precomputed = 0.0
+if not custom_sources_df.empty:
+    for _, src in custom_sources_df.iterrows():
+        if src["active"]:
+            custom_monthly_precomputed += monthly_from_cadence(float(src["amount"]), src["cadence"])
 
+total_monthly_precomputed = txn_sources_monthly_precomputed + custom_monthly_precomputed
+
+st.metric("Total Monthly Income", f"${total_monthly_precomputed:,.2f}")
+st.caption("Active sources only. Transaction sources without an override show $0 until configured.")
 st.markdown("---")
 
 
@@ -150,13 +150,10 @@ def render_txn_source(src) -> float:
 
     effective_amt = float(amount_override) if amount_override is not None else live_avg
     monthly = monthly_from_cadence(effective_amt, cadence)
-    cadence_label = CADENCE_OPTIONS.get(cadence, CADENCE_OPTIONS["semi_monthly"])["label"]
     active_label = "" if src["active"] else " *(inactive)*"
 
     with st.expander(
-        f"💵 **{src['alias']}**{active_label}  —  "
-        f"${effective_amt:,.2f} {cadence_label}  →  **${monthly:,.2f}/month**"
-        + (f"  ({len(matched_reset)} transaction(s) matched)" if filter_value else ""),
+        f"💵 **{src['alias'].strip()}**{active_label}  —  ${monthly:,.2f}/month",
         expanded=False,
     ):
         txn_edited = None
@@ -307,11 +304,11 @@ def render_txn_source(src) -> float:
     return monthly
 
 
-# ── Income sources grouped by entity ──────────────────────────────────────────
+# ── Transaction-Based Income Sources grouped by entity ─────────────────────────
 
 total_monthly_sources = 0.0
 
-st.subheader("Income Sources")
+st.subheader("Transaction-Based Income Sources")
 
 if sources_df.empty:
     st.info("No income sources configured yet. Add one below.")
@@ -337,10 +334,27 @@ else:
         for tab, e in zip(tabs[:len(tab_entities)], tab_entities):
             with tab:
                 group = sources_df[sources_df["_eid"] == str(e["id"])]
+                # Pre-compute monthly sum for caption using overrides or 0
+                monthly_sum = sum(
+                    monthly_from_cadence(
+                        float(row["amount_override"]) if row.get("amount_override") is not None else 0.0,
+                        row.get("cadence") or default_cadence,
+                    )
+                    for _, row in group[group["active"] == True].iterrows()
+                )
+                st.caption(f"{len(group)} source(s) · ${monthly_sum:,.2f}/month")
                 for _, src in group.iterrows():
                     total_monthly_sources += render_txn_source(src)
         if not unlinked.empty:
             with tabs[-1]:
+                monthly_sum_unlinked = sum(
+                    monthly_from_cadence(
+                        float(row["amount_override"]) if row.get("amount_override") is not None else 0.0,
+                        row.get("cadence") or default_cadence,
+                    )
+                    for _, row in unlinked[unlinked["active"] == True].iterrows()
+                )
+                st.caption(f"{len(unlinked)} source(s) · ${monthly_sum_unlinked:,.2f}/month")
                 for _, src in unlinked.iterrows():
                     total_monthly_sources += render_txn_source(src)
     else:
@@ -349,9 +363,136 @@ else:
 
 st.markdown("---")
 
-# ── Add Income Source ──────────────────────────────────────────────────────────
+# ── Custom Income Sources grouped by entity ───────────────────────────────────
 
-st.subheader("Add Income Source")
+st.subheader("Custom Income Sources")
+st.caption("Add income not captured in your bank transactions (freelance, rental, etc.).")
+
+custom_monthly = 0.0
+
+if not custom_sources_df.empty:
+    custom_sources_df["_eid"] = custom_sources_df["entity_id"].apply(
+        lambda x: str(x) if x and not pd.isna(x) else None
+    )
+    custom_unlinked = custom_sources_df[custom_sources_df["_eid"].isna()]
+
+    custom_tab_entities = [
+        e for _, e in entities.iterrows()
+        if not custom_sources_df[custom_sources_df["_eid"] == str(e["id"])].empty
+    ]
+    custom_tab_names = [
+        f"{'🏷️ ' if e['is_default'] else ''}{e['name']}"
+        for e in custom_tab_entities
+    ]
+    if not custom_unlinked.empty:
+        custom_tab_names.append("Uncategorized")
+
+    def render_custom_source(src):
+        nonlocal custom_monthly
+        src_monthly = monthly_from_cadence(float(src["amount"]), src["cadence"])
+        if src["active"]:
+            custom_monthly += src_monthly
+        active_label = "" if src["active"] else " *(inactive)*"
+
+        with st.expander(
+            f"💰 **{src['name'].strip()}**{active_label}  —  ${src_monthly:,.2f}/month",
+            expanded=False,
+        ):
+            ec1, ec2, ec3 = st.columns(3)
+            with ec1:
+                new_src_name = st.text_input("Name", value=src["name"], key=f"sname_{src['id']}")
+            with ec2:
+                new_src_amount = st.number_input(
+                    "Amount ($)", value=float(src["amount"]), min_value=0.01, key=f"samt_{src['id']}"
+                )
+            with ec3:
+                new_src_cad = st.selectbox(
+                    "Cadence",
+                    list(CADENCE_OPTIONS.keys()),
+                    index=list(CADENCE_OPTIONS.keys()).index(src["cadence"])
+                    if src["cadence"] in CADENCE_OPTIONS else 1,
+                    format_func=lambda c: CADENCE_OPTIONS[c]["label"],
+                    key=f"scad_{src['id']}",
+                )
+            new_src_active = st.checkbox("Active", value=bool(src["active"]), key=f"sact_{src['id']}")
+            new_src_monthly = monthly_from_cadence(new_src_amount, new_src_cad)
+            st.info(f"Monthly equivalent: **${new_src_monthly:,.2f}/month**")
+
+            dc1, dc2 = st.columns([1, 1])
+            with dc1:
+                if st.button("💾 Save", key=f"ssave_{src['id']}"):
+                    try:
+                        with get_engine().begin() as conn:
+                            conn.execute(
+                                text("""
+                                    UPDATE budgetlens.income_sources
+                                    SET name = :name, amount = :amt, cadence = :cad, active = :active
+                                    WHERE id = :id
+                                """),
+                                {"name": new_src_name, "amt": new_src_amount,
+                                 "cad": new_src_cad, "active": new_src_active,
+                                 "id": str(src["id"])},
+                            )
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Save failed: {e}")
+            with dc2:
+                if st.button("🗑️ Delete", key=f"sdel_{src['id']}"):
+                    try:
+                        with get_engine().begin() as conn:
+                            conn.execute(
+                                text("DELETE FROM budgetlens.income_sources WHERE id = :id"),
+                                {"id": str(src["id"])},
+                            )
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Delete failed: {e}")
+
+    if custom_tab_names:
+        custom_tabs = st.tabs(custom_tab_names)
+        for tab, e in zip(custom_tabs[:len(custom_tab_entities)], custom_tab_entities):
+            with tab:
+                group = custom_sources_df[custom_sources_df["_eid"] == str(e["id"])]
+                monthly_sum = float(
+                    group[group["active"] == True].apply(
+                        lambda r: monthly_from_cadence(float(r["amount"]), r["cadence"]), axis=1
+                    ).sum()
+                )
+                st.caption(f"{len(group)} source(s) · ${monthly_sum:,.2f}/month")
+                for _, src in group.iterrows():
+                    render_custom_source(src)
+        if not custom_unlinked.empty:
+            with custom_tabs[-1]:
+                monthly_sum_unlinked = float(
+                    custom_unlinked[custom_unlinked["active"] == True].apply(
+                        lambda r: monthly_from_cadence(float(r["amount"]), r["cadence"]), axis=1
+                    ).sum()
+                )
+                st.caption(f"{len(custom_unlinked)} source(s) · ${monthly_sum_unlinked:,.2f}/month")
+                for _, src in custom_unlinked.iterrows():
+                    render_custom_source(src)
+    else:
+        for _, src in custom_sources_df.iterrows():
+            render_custom_source(src)
+
+st.markdown("---")
+
+# ── Monthly Income Summary ────────────────────────────────────────────────────
+
+st.subheader("Monthly Income Summary")
+
+total_monthly = total_monthly_sources + custom_monthly
+
+c1, c2, c3 = st.columns(3)
+c1.metric("From Income Sources", f"${total_monthly_sources:,.2f}/mo")
+c2.metric("Custom Sources", f"${custom_monthly:,.2f}/mo")
+c3.metric("Total Monthly Income", f"${total_monthly:,.2f}/mo")
+
+st.markdown("---")
+
+# ── Add Transaction-Based Income Source ───────────────────────────────────────
+
+st.subheader("Add Transaction-Based Income Source")
 
 if "add_src_gen" not in st.session_state:
     st.session_state["add_src_gen"] = 0
@@ -481,77 +622,8 @@ with btn2:
 
 st.markdown("---")
 
-# ── Custom Income Sources ─────────────────────────────────────────────────────
+# ── Add Custom Income Source ──────────────────────────────────────────────────
 
-st.subheader("Custom Income Sources")
-st.caption("Add income not captured in your bank transactions (freelance, rental, etc.).")
-
-custom_monthly = 0.0
-
-if not custom_sources_df.empty:
-    for _, src in custom_sources_df.iterrows():
-        src_monthly = monthly_from_cadence(float(src["amount"]), src["cadence"])
-        if src["active"]:
-            custom_monthly += src_monthly
-        cadence_label = CADENCE_OPTIONS.get(src["cadence"], {}).get("label", src["cadence"])
-        active_label = "" if src["active"] else " *(inactive)*"
-
-        with st.expander(
-            f"✏️ **{src['name']}**{active_label}  —  "
-            f"${float(src['amount']):,.2f} {cadence_label}  →  **${src_monthly:,.2f}/month**",
-            expanded=False,
-        ):
-            ec1, ec2, ec3 = st.columns(3)
-            with ec1:
-                new_src_name = st.text_input("Name", value=src["name"], key=f"sname_{src['id']}")
-            with ec2:
-                new_src_amount = st.number_input(
-                    "Amount ($)", value=float(src["amount"]), min_value=0.01, key=f"samt_{src['id']}"
-                )
-            with ec3:
-                new_src_cad = st.selectbox(
-                    "Cadence",
-                    list(CADENCE_OPTIONS.keys()),
-                    index=list(CADENCE_OPTIONS.keys()).index(src["cadence"])
-                    if src["cadence"] in CADENCE_OPTIONS else 1,
-                    format_func=lambda c: CADENCE_OPTIONS[c]["label"],
-                    key=f"scad_{src['id']}",
-                )
-            new_src_active = st.checkbox("Active", value=bool(src["active"]), key=f"sact_{src['id']}")
-            new_src_monthly = monthly_from_cadence(new_src_amount, new_src_cad)
-            st.info(f"Monthly equivalent: **${new_src_monthly:,.2f}/month**")
-
-            dc1, dc2 = st.columns([1, 1])
-            with dc1:
-                if st.button("💾 Save", key=f"ssave_{src['id']}"):
-                    try:
-                        with get_engine().begin() as conn:
-                            conn.execute(
-                                text("""
-                                    UPDATE budgetlens.income_sources
-                                    SET name = :name, amount = :amt, cadence = :cad, active = :active
-                                    WHERE id = :id
-                                """),
-                                {"name": new_src_name, "amt": new_src_amount,
-                                 "cad": new_src_cad, "active": new_src_active,
-                                 "id": str(src["id"])},
-                            )
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Save failed: {e}")
-            with dc2:
-                if st.button("🗑️ Delete", key=f"sdel_{src['id']}"):
-                    try:
-                        with get_engine().begin() as conn:
-                            conn.execute(
-                                text("DELETE FROM budgetlens.income_sources WHERE id = :id"),
-                                {"id": str(src["id"])},
-                            )
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Delete failed: {e}")
-
-st.markdown("---")
 st.subheader("Add Custom Income Source")
 
 if "add_custom_gen" not in st.session_state:
@@ -604,13 +676,26 @@ with cb2:
 
 st.markdown("---")
 
-# ── Monthly Income Summary ────────────────────────────────────────────────────
+# ── Settings ──────────────────────────────────────────────────────────────────
 
-st.subheader("Monthly Income Summary")
+st.subheader("Settings")
+st.caption("Applied to income sources that don't have their own cadence set.")
 
-total_monthly = total_monthly_sources + custom_monthly
-
-c1, c2, c3 = st.columns(3)
-c1.metric("From Income Sources", f"${total_monthly_sources:,.2f}/mo")
-c2.metric("Custom Sources", f"${custom_monthly:,.2f}/mo")
-c3.metric("Total Monthly Income", f"${total_monthly:,.2f}/mo")
+new_default_cadence = st.selectbox(
+    "Default Pay Cadence",
+    list(CADENCE_OPTIONS.keys()),
+    index=list(CADENCE_OPTIONS.keys()).index(default_cadence),
+    format_func=lambda c: CADENCE_OPTIONS[c]["label"],
+    key="default_cadence_select",
+)
+if new_default_cadence != default_cadence:
+    try:
+        with get_engine().begin() as conn:
+            conn.execute(
+                text("UPDATE budgetlens.settings SET value = :v WHERE key = 'pay_cadence'"),
+                {"v": new_default_cadence},
+            )
+        default_cadence = new_default_cadence
+        st.success("Default cadence updated.")
+    except Exception as e:
+        st.error(f"Failed to save: {e}")
