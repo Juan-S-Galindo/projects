@@ -3,7 +3,6 @@ from datetime import date
 from dateutil.relativedelta import relativedelta
 
 PERIOD_UNITS: dict[str, str] = {
-    "weeks":  "Week(s)",
     "months": "Month(s)",
     "years":  "Year(s)",
 }
