@@ -164,10 +164,30 @@ def render_bill_card(b):
                 excluded_hashes = excluded_by_bill.get(bill_id, set())
                 matched_reset = matched.reset_index(drop=True)
                 included_mask_stored = ~matched_reset["content_hash"].isin(excluded_hashes)
+
+                # Apply select/deselect-all override if one was requested last run
+                override_key = f"include_override_{bill_id}"
+                override = st.session_state.pop(override_key, None)
+
+                _sa, _da, _ = st.columns([1, 1, 8])
+                with _sa:
+                    if st.button("Select All", key=f"sel_all_{bill_id}", use_container_width=True):
+                        st.session_state[override_key] = True
+                        st.session_state.pop(f"txn_editor_{bill_id}", None)
+                        st.rerun()
+                with _da:
+                    if st.button("Deselect All", key=f"desel_all_{bill_id}", use_container_width=True):
+                        st.session_state[override_key] = False
+                        st.session_state.pop(f"txn_editor_{bill_id}", None)
+                        st.rerun()
+
                 txn_display = matched_reset[["transaction_date", "description", "amount"]].copy()
                 txn_display["transaction_date"] = txn_display["transaction_date"].astype(str)
                 txn_display["amount"] = txn_display["amount"].abs().astype(float)
-                txn_display["Include"] = included_mask_stored.values
+                if override is not None:
+                    txn_display["Include"] = override
+                else:
+                    txn_display["Include"] = included_mask_stored.values
                 txn_display = txn_display.rename(columns={
                     "transaction_date": "Date",
                     "description": "Description",
