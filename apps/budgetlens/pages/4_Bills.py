@@ -37,12 +37,25 @@ def apply_filter(df: pd.DataFrame, filter_type: str, filter_value: str) -> pd.Da
         return df.iloc[0:0]
 
 
-def compute_monthly(amounts: pd.Series, dates: pd.Series) -> float:
-    """Sum selected amounts and divide by the number of distinct calendar months covered."""
+_MONTHS_PER_UNIT = {"months": 1, "years": 12, "weeks": 12 / 52}
+
+
+def _count_periods(dates: pd.Series, unit: str) -> int:
+    dt = pd.to_datetime(dates)
+    if unit == "years":
+        return max(len(set(dt.dt.year)), 1)
+    if unit == "weeks":
+        return max(len(set(dt.dt.strftime("%Y-%W"))), 1)
+    return max(len(set(dt.dt.strftime("%Y-%m"))), 1)
+
+
+def compute_monthly(amounts: pd.Series, dates: pd.Series, unit: str, count: int) -> float:
+    """Sum selected amounts divided by (distinct periods × months per period)."""
     if amounts.empty:
         return 0.0
-    n_months = len(set(pd.to_datetime(dates).dt.strftime("%Y-%m")))
-    return float(amounts.abs().sum()) / max(n_months, 1)
+    n_periods = _count_periods(dates, unit)
+    months = n_periods * count * _MONTHS_PER_UNIT.get(unit, 1)
+    return float(amounts.abs().sum()) / months
 
 
 # ── Load ───────────────────────────────────────────────────────────────────────
@@ -173,11 +186,12 @@ def render_bill_card(b):
                 if include_mask.any():
                     sel_amounts = matched_reset.loc[include_mask, "amount"]
                     sel_dates = matched_reset.loc[include_mask, "transaction_date"]
-                    live_monthly = compute_monthly(sel_amounts, sel_dates)
-                    n_months = len(set(pd.to_datetime(sel_dates).dt.strftime("%Y-%m")))
+                    live_monthly = compute_monthly(sel_amounts, sel_dates, freq_unit, freq_count)
+                    n_periods = _count_periods(sel_dates, freq_unit)
+                    period_label = freq_unit.rstrip("s")  # "months"→"month", "years"→"year", "weeks"→"week"
                     st.caption(
                         f"{int(include_mask.sum())} transactions  ·  "
-                        f"{n_months} month(s)  ·  "
+                        f"{n_periods} {period_label}(s)  ·  "
                         f"total ${float(sel_amounts.abs().sum()):,.2f}  ·  "
                         f"→ **${live_monthly:,.2f}/month**"
                     )
@@ -460,10 +474,11 @@ if add_filter_value and not txns_all.empty:
         if inc_mask.any():
             sel_amounts = add_preview_reset.loc[inc_mask, "amount"]
             sel_dates = add_preview_reset.loc[inc_mask, "transaction_date"]
-            monthly_add = compute_monthly(sel_amounts, sel_dates)
-            n_months = len(set(pd.to_datetime(sel_dates).dt.strftime("%Y-%m")))
+            monthly_add = compute_monthly(sel_amounts, sel_dates, add_unit, add_count)
+            n_periods = _count_periods(sel_dates, add_unit)
+            period_label = add_unit.rstrip("s")
             st.info(
-                f"{int(inc_mask.sum())} transactions  ·  {n_months} month(s)  ·  "
+                f"{int(inc_mask.sum())} transactions  ·  {n_periods} {period_label}(s)  ·  "
                 f"total ${float(sel_amounts.abs().sum()):,.2f}  ·  "
                 f"→ **${monthly_add:,.2f}/month**"
             )
@@ -486,7 +501,7 @@ with btn1:
                 sel_amounts = add_preview_reset.loc[inc_mask, "amount"]
                 sel_dates = add_preview_reset.loc[inc_mask, "transaction_date"]
                 amount = float(sel_amounts.abs().mean())
-                me = compute_monthly(sel_amounts, sel_dates)
+                me = compute_monthly(sel_amounts, sel_dates, add_unit, add_count)
 
                 dates = add_preview_reset.loc[inc_mask, "transaction_date"]
                 last_dt = dates.max()
