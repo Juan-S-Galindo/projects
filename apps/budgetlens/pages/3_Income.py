@@ -368,7 +368,14 @@ st.markdown("---")
 st.subheader("Custom Income Sources")
 st.caption("Add income not captured in your bank transactions (freelance, rental, etc.).")
 
-custom_monthly = 0.0
+if not custom_sources_df.empty:
+    custom_monthly = float(
+        custom_sources_df[custom_sources_df["active"] == True].apply(
+            lambda r: monthly_from_cadence(float(r["amount"]), r["cadence"]), axis=1
+        ).sum()
+    )
+else:
+    custom_monthly = 0.0
 
 if not custom_sources_df.empty:
     custom_sources_df["_eid"] = custom_sources_df["entity_id"].apply(
@@ -388,10 +395,7 @@ if not custom_sources_df.empty:
         custom_tab_names.append("Uncategorized")
 
     def render_custom_source(src):
-        nonlocal custom_monthly
         src_monthly = monthly_from_cadence(float(src["amount"]), src["cadence"])
-        if src["active"]:
-            custom_monthly += src_monthly
         active_label = "" if src["active"] else " *(inactive)*"
 
         with st.expander(
