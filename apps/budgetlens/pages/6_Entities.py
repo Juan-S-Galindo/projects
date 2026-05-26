@@ -511,11 +511,9 @@ else:
                     else:
                         for _, b in entity_bills.iterrows():
                             active_tag = "" if b["active"] else " *(inactive)*"
-                            freq = frequency_label(b["frequency"], int(b["frequency_count"] or 1))
                             st.markdown(
-                                f"- {b['name']}{active_tag} — "
-                                f"${float(b['amount']):,.2f} {freq} "
-                                f"*(${float(b['monthly_equivalent']):,.2f}/mo)*"
+                                f"- {b['name'].strip()}{active_tag} — "
+                                f"${float(b['monthly_equivalent']):,.2f}/mo"
                             )
                 with right:
                     st.markdown("**Income Sources**")
