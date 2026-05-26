@@ -135,10 +135,7 @@ def render_expenses_tab(eid: str, expenses: pd.DataFrame):
 
             row_l, row_r = st.columns([8, 2])
             with row_l:
-                st.markdown(
-                    f"↺ **{ex['name'].strip()}**{active_tag} — "
-                    f"${float(ex['amount']):,.2f} {frequency_label(freq, cnt)} → **${me:,.2f}/mo**"
-                )
+                st.markdown(f"↺ {ex['name'].strip()}{active_tag} — ${me:,.2f}/mo")
             with row_r:
                 btn_e, btn_d = st.columns(2)
                 with btn_e:
@@ -237,7 +234,7 @@ def render_expenses_tab(eid: str, expenses: pd.DataFrame):
 
             row_l, row_r = st.columns([8, 2])
             with row_l:
-                st.markdown(f"◆ **{ex['name'].strip()}** — ${float(ex['amount']):,.2f} on {exp_date}")
+                st.markdown(f"◆ {ex['name'].strip()} — ${float(ex['amount']):,.2f} on {exp_date}")
             with row_r:
                 btn_e, btn_d = st.columns(2)
                 with btn_e:
