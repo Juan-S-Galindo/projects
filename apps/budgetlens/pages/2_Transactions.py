@@ -126,7 +126,7 @@ def _matches_any_source(desc: str, sources: pd.DataFrame) -> bool:
 
 display = df.copy()
 display["Category"] = display["category"].map(lambda c: CATEGORY_LABELS.get(c, c))
-display["Source"] = display["source"].map({"chase": "Chase", "boa": "BOA"})
+display["Source"] = display["source"].map({"chase": "Chase", "bofa": "BOA"})
 display["Date"] = display["transaction_date"].astype(str)
 display["Amount ($)"] = display["amount"].astype(float)
 display["Bill"] = display["is_bill"].astype(bool)

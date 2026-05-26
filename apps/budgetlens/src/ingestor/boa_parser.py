@@ -46,7 +46,7 @@ def parse_boa(file_bytes: bytes) -> pd.DataFrame:
 
     df["transaction_date"] = pd.to_datetime(df["transaction_date"], format="%m/%d/%Y").dt.date
 
-    df["source"] = "boa"
+    df["source"] = "bofa"
     df["original_description"] = df["description"]
     df["category"] = df["description"].apply(auto_categorize)
     df["category_overridden"] = False
