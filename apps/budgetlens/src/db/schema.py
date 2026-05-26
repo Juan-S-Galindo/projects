@@ -96,6 +96,22 @@ CREATE TABLE IF NOT EXISTS budgetlens.income_sources (
 DEDUP_VIEW = """
 DO $$
 BEGIN
+    -- Drop the stale bootstrap view if it is a VIEW (not a dbt table) and lacks txn_hash.
+    IF EXISTS (
+        SELECT 1 FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'budgetlens' AND c.relname = 'transactions_deduped'
+          AND c.relkind = 'v'
+    ) AND NOT EXISTS (
+        SELECT 1 FROM pg_attribute a
+        JOIN pg_class c ON c.oid = a.attrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'budgetlens' AND c.relname = 'transactions_deduped'
+          AND a.attname = 'txn_hash' AND a.attnum > 0 AND NOT a.attisdropped
+    ) THEN
+        DROP VIEW budgetlens.transactions_deduped;
+    END IF;
+
     IF NOT EXISTS (
         SELECT 1 FROM pg_class c
         JOIN pg_namespace n ON n.oid = c.relnamespace
