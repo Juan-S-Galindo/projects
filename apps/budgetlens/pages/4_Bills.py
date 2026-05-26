@@ -69,7 +69,7 @@ try:
         )
         txns_all = pd.read_sql(
             text("""
-                SELECT content_hash, description, transaction_date, amount
+                SELECT txn_hash, content_hash, description, transaction_date, amount
                 FROM budgetlens.transactions_deduped
                 WHERE amount < 0
                 ORDER BY transaction_date DESC
@@ -547,18 +547,20 @@ with btn1:
                             {"bid": new_bill_id, "h": h},
                         )
 
-                    # Update ALL matched transactions (included + excluded)
-                    all_matched_hashes = add_preview_reset["content_hash"].tolist()
-                    if all_matched_hashes:
+                    # Write bill_id + category into transaction_attributes (keyed by txn_hash)
+                    for txn_hash in add_preview_reset["txn_hash"].tolist():
                         conn.execute(
                             text("""
-                                UPDATE budgetlens.transactions
-                                SET bill_id = :bid,
-                                    category = :cat,
-                                    category_overridden = TRUE
-                                WHERE content_hash = ANY(:hashes)
+                                INSERT INTO budgetlens.transaction_attributes
+                                    (txn_hash, category, category_overridden, bill_id)
+                                VALUES (:txn_hash, :cat, TRUE, :bid)
+                                ON CONFLICT (txn_hash) DO UPDATE
+                                    SET bill_id = EXCLUDED.bill_id,
+                                        category = EXCLUDED.category,
+                                        category_overridden = TRUE,
+                                        updated_at = NOW()
                             """),
-                            {"bid": new_bill_id, "cat": add_cat, "hashes": all_matched_hashes},
+                            {"txn_hash": txn_hash, "cat": add_cat, "bid": new_bill_id},
                         )
 
                 st.success(

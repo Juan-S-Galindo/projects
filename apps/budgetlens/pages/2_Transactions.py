@@ -76,12 +76,8 @@ try:
                 td.transaction_type,
                 td.amount,
                 td.content_hash,
-                EXISTS (
-                    SELECT 1
-                    FROM budgetlens.bill_transactions bt
-                    JOIN budgetlens.transactions t ON t.id = bt.transaction_id
-                    WHERE t.content_hash = td.content_hash
-                ) AS is_bill
+                td.txn_hash,
+                td.bill_id IS NOT NULL AS is_bill
             FROM budgetlens.transactions_deduped td
             WHERE {' AND '.join(where)}
             ORDER BY td.transaction_date DESC
@@ -172,11 +168,15 @@ if st.button("💾 Save Changes", type="primary"):
                 if changed:
                     conn.execute(
                         text("""
-                            UPDATE budgetlens.transactions
-                            SET category = :cat, category_overridden = TRUE
-                            WHERE description = :desc
+                            INSERT INTO budgetlens.transaction_attributes
+                                (txn_hash, category, category_overridden)
+                            VALUES (:txn_hash, :cat, TRUE)
+                            ON CONFLICT (txn_hash) DO UPDATE
+                                SET category = EXCLUDED.category,
+                                    category_overridden = TRUE,
+                                    updated_at = NOW()
                         """),
-                        {"cat": new_cat, "desc": df.iloc[i]["description"]},
+                        {"txn_hash": df.iloc[i]["txn_hash"], "cat": new_cat},
                     )
 
         if cat_changed.any():

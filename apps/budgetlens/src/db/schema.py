@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS budgetlens.transactions (
     running_balance      NUMERIC(12,2),
     bill_id              UUID,
     imported_at          TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
-    content_hash         VARCHAR(64)
+    content_hash         VARCHAR(64),
+    txn_hash             VARCHAR(32)
 );
 
 CREATE TABLE IF NOT EXISTS budgetlens.bills (
@@ -263,6 +264,31 @@ CREATE TABLE IF NOT EXISTS budgetlens.entity_transaction_links (
 """
 
 
+TXN_HASH_MIGRATION = """
+ALTER TABLE budgetlens.transactions ADD COLUMN IF NOT EXISTS txn_hash VARCHAR(32);
+
+-- Backfill txn_hash for existing rows: md5(source|date|description|amount)
+-- md5() is built into PostgreSQL — no extension required.
+UPDATE budgetlens.transactions
+SET txn_hash = md5(
+    source || '|' || transaction_date::text || '|' || description
+    || '|' || amount::text
+)
+WHERE txn_hash IS NULL;
+
+-- Mutable per-transaction attributes keyed by the natural hash.
+-- All app writes (category overrides, bill links) land here instead of
+-- mutating the append-only staging table.
+CREATE TABLE IF NOT EXISTS budgetlens.transaction_attributes (
+    txn_hash            VARCHAR(32)  PRIMARY KEY,
+    category            VARCHAR(50),
+    category_overridden BOOLEAN      NOT NULL DEFAULT FALSE,
+    bill_id             UUID         REFERENCES budgetlens.bills(id) ON DELETE SET NULL,
+    updated_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+"""
+
+
 def init_schema(engine):
     def _run(sql: str):
         with engine.connect() as conn:
@@ -276,3 +302,4 @@ def init_schema(engine):
     _run(INCOME_MIGRATION)
     _run(BILL_FILTER_MIGRATION)
     _run(ENTITY_MIGRATION)
+    _run(TXN_HASH_MIGRATION)
