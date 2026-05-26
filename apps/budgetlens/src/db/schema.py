@@ -93,13 +93,25 @@ CREATE TABLE IF NOT EXISTS budgetlens.income_sources (
 """
 
 DEDUP_VIEW = """
-CREATE OR REPLACE VIEW budgetlens.transactions_deduped AS
-SELECT DISTINCT ON (content_hash)
-    id, source, transaction_date, post_date, description, original_description,
-    category, category_overridden, transaction_type, amount, memo,
-    running_balance, bill_id, imported_at, content_hash
-FROM budgetlens.transactions
-ORDER BY content_hash, imported_at DESC;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'budgetlens' AND c.relname = 'transactions_deduped'
+    ) THEN
+        EXECUTE '
+            CREATE VIEW budgetlens.transactions_deduped AS
+            SELECT DISTINCT ON (content_hash)
+                id, source, transaction_date, post_date, description, original_description,
+                category, category_overridden, transaction_type, amount, memo,
+                running_balance, bill_id, imported_at, content_hash
+            FROM budgetlens.transactions
+            ORDER BY content_hash, imported_at DESC
+        ';
+    END IF;
+END
+$$;
 """
 
 DROP_UNIQUE = """

@@ -1,4 +1,4 @@
-import sys, os
+import sys, os, subprocess
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import streamlit as st
@@ -135,5 +135,29 @@ if st.button("✅ Confirm Import", type="primary"):
                 st.error(f"**{entry['name']}** — import failed: {e}")
                 all_ok = False
 
-    if all_ok:
-        st.info("All files imported. The deduplicated view has been updated automatically.")
+    dbt_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "dbt")
+    with st.spinner("Running dbt to refresh the deduplicated table…"):
+        try:
+            result = subprocess.run(
+                ["dbt", "run", "--project-dir", dbt_dir, "--profiles-dir", dbt_dir],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            dbt_output = result.stdout + result.stderr
+            if result.returncode == 0:
+                st.success("dbt models refreshed — deduplicated table is up to date.")
+                with st.expander("dbt output", expanded=False):
+                    st.code(dbt_output)
+            else:
+                st.warning(
+                    "dbt run failed — imported rows are staged but the "
+                    "deduplicated table may be stale."
+                )
+                with st.expander("dbt output", expanded=True):
+                    st.code(dbt_output)
+        except FileNotFoundError:
+            st.warning(
+                "`dbt` not found in PATH — skipping model refresh. "
+                "Run `dbt run` manually from `apps/budgetlens/dbt/`."
+            )
