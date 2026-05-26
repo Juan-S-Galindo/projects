@@ -9,7 +9,7 @@ from sqlalchemy import text
 from src.db.connection import get_engine
 from src.categorizer import ALL_CATEGORIES, CATEGORY_LABELS
 from src.bill_calculator import (
-    PERIOD_UNITS, monthly_equivalent, next_charge_date,
+    PERIOD_UNITS, next_charge_date,
     bill_status, hit_months, frequency_label,
 )
 
@@ -21,12 +21,6 @@ FILTER_TYPES = {
     "starts_with": "Starts With",
     "regex":       "Regex",
 }
-
-AGG_METHODS = {
-    "average": "Average per occurrence",
-    "sum_avg": "Sum per month, then average",
-}
-
 
 def apply_filter(df: pd.DataFrame, filter_type: str, filter_value: str) -> pd.DataFrame:
     if not filter_value:
@@ -43,16 +37,12 @@ def apply_filter(df: pd.DataFrame, filter_type: str, filter_value: str) -> pd.Da
         return df.iloc[0:0]
 
 
-def compute_monthly(amounts: pd.Series, dates: pd.Series, method: str, unit: str, count: int) -> float:
+def compute_monthly(amounts: pd.Series, dates: pd.Series) -> float:
+    """Sum selected amounts and divide by the number of distinct calendar months covered."""
     if amounts.empty:
         return 0.0
-    abs_amounts = amounts.abs()
-    if method == "sum_avg":
-        df = pd.DataFrame({"amount": abs_amounts, "date": pd.to_datetime(dates)})
-        df["month"] = df["date"].dt.to_period("M")
-        return float(df.groupby("month")["amount"].sum().mean())
-    else:
-        return monthly_equivalent(float(abs_amounts.mean()), unit, count)
+    n_months = len(set(pd.to_datetime(dates).dt.strftime("%Y-%m")))
+    return float(amounts.abs().sum()) / max(n_months, 1)
 
 
 # ── Load ───────────────────────────────────────────────────────────────────────
@@ -117,7 +107,6 @@ def render_bill_card(b):
     bill_id = str(b["id"])
     filter_type = b.get("filter_type") or "contains"
     filter_value = b.get("filter_value") or ""
-    agg_method = b.get("aggregation_method") or "average"
 
     last = b["last_charge_date"]
     nxt = b["next_charge_date"]
@@ -184,11 +173,12 @@ def render_bill_card(b):
                 if include_mask.any():
                     sel_amounts = matched_reset.loc[include_mask, "amount"]
                     sel_dates = matched_reset.loc[include_mask, "transaction_date"]
-                    live_monthly = compute_monthly(sel_amounts, sel_dates, agg_method, freq_unit, freq_count)
-                    avg_per_txn = float(sel_amounts.abs().mean())
+                    live_monthly = compute_monthly(sel_amounts, sel_dates)
+                    n_months = len(set(pd.to_datetime(sel_dates).dt.strftime("%Y-%m")))
                     st.caption(
-                        f"{int(include_mask.sum())} selected  ·  "
-                        f"avg ${avg_per_txn:,.2f}  ·  "
+                        f"{int(include_mask.sum())} transactions  ·  "
+                        f"{n_months} month(s)  ·  "
+                        f"total ${float(sel_amounts.abs().sum()):,.2f}  ·  "
                         f"→ **${live_monthly:,.2f}/month**"
                     )
                 else:
@@ -241,13 +231,6 @@ def render_bill_card(b):
                     format_func=lambda u: PERIOD_UNITS[u],
                     key=f"bunit_{bill_id}",
                 )
-            new_agg = st.selectbox(
-                "Monthly calculation",
-                list(AGG_METHODS.keys()),
-                index=list(AGG_METHODS.keys()).index(agg_method) if agg_method in AGG_METHODS else 0,
-                format_func=lambda m: AGG_METHODS[m],
-                key=f"bagg_{bill_id}",
-            )
             use_override = st.checkbox(
                 "Override amount", value=False, key=f"bovr_toggle_{bill_id}"
             )
@@ -306,14 +289,14 @@ def render_bill_card(b):
                                     frequency_count = :cnt, amount = :amt,
                                     monthly_equivalent = :me, active = :active,
                                     filter_type = :ftype, filter_value = :fval,
-                                    aggregation_method = :agg, entity_id = :eid,
+                                    entity_id = :eid,
                                     last_charge_date = :lcd, next_charge_date = :ncd
                                 WHERE id = :id
                             """),
                             {"name": new_name, "cat": new_cat, "unit": new_unit,
                              "cnt": new_count, "amt": stored_amount, "me": me_preview,
                              "active": new_active, "ftype": new_filter_type,
-                             "fval": new_filter_value or None, "agg": new_agg,
+                             "fval": new_filter_value or None,
                              "eid": new_entity, "lcd": new_last, "ncd": new_ncd,
                              "id": bill_id},
                         )
@@ -440,12 +423,6 @@ with a3:
             format_func=lambda u: PERIOD_UNITS[u],
             key=f"add_unit_{_gen}",
         )
-    add_agg = st.selectbox(
-        "Monthly calculation",
-        list(AGG_METHODS.keys()),
-        format_func=lambda m: AGG_METHODS[m],
-        key=f"add_agg_{_gen}",
-    )
     add_notes = st.text_input("Notes (optional)", key=f"add_notes_{_gen}")
 
 # Transaction preview
@@ -483,11 +460,12 @@ if add_filter_value and not txns_all.empty:
         if inc_mask.any():
             sel_amounts = add_preview_reset.loc[inc_mask, "amount"]
             sel_dates = add_preview_reset.loc[inc_mask, "transaction_date"]
-            monthly_add = compute_monthly(sel_amounts, sel_dates, add_agg, add_unit, add_count)
-            avg_per_txn = float(sel_amounts.abs().mean())
+            monthly_add = compute_monthly(sel_amounts, sel_dates)
+            n_months = len(set(pd.to_datetime(sel_dates).dt.strftime("%Y-%m")))
             st.info(
-                f"{int(inc_mask.sum())} selected  ·  avg ${avg_per_txn:,.2f}  ·  "
-                f"→ **${monthly_add:,.2f}/month** ({AGG_METHODS[add_agg]})"
+                f"{int(inc_mask.sum())} transactions  ·  {n_months} month(s)  ·  "
+                f"total ${float(sel_amounts.abs().sum()):,.2f}  ·  "
+                f"→ **${monthly_add:,.2f}/month**"
             )
         else:
             st.warning("No transactions selected.")
@@ -508,7 +486,7 @@ with btn1:
                 sel_amounts = add_preview_reset.loc[inc_mask, "amount"]
                 sel_dates = add_preview_reset.loc[inc_mask, "transaction_date"]
                 amount = float(sel_amounts.abs().mean())
-                me = compute_monthly(sel_amounts, sel_dates, add_agg, add_unit, add_count)
+                me = compute_monthly(sel_amounts, sel_dates)
 
                 dates = add_preview_reset.loc[inc_mask, "transaction_date"]
                 last_dt = dates.max()
@@ -525,16 +503,16 @@ with btn1:
                             INSERT INTO budgetlens.bills
                                 (name, category, frequency, frequency_count, amount,
                                  monthly_equivalent, start_date, last_charge_date, next_charge_date,
-                                 notes, filter_type, filter_value, aggregation_method, entity_id)
+                                 notes, filter_type, filter_value, entity_id)
                             VALUES
                                 (:name, :cat, :unit, :cnt, :amt, :me, :sd, :lcd, :ncd,
-                                 :notes, :ftype, :fval, :agg, :eid)
+                                 :notes, :ftype, :fval, :eid)
                             RETURNING id
                         """),
                         {"name": add_name, "cat": add_cat, "unit": add_unit, "cnt": add_count,
                          "amt": amount, "me": me, "sd": first_dt, "lcd": last_dt, "ncd": ncd,
                          "notes": add_notes or None, "ftype": add_filter_type,
-                         "fval": add_filter_value, "agg": add_agg, "eid": add_entity},
+                         "fval": add_filter_value, "eid": add_entity},
                     )
                     new_bill_id = str(result.fetchone()[0])
 
