@@ -482,8 +482,22 @@ else:
             f"{expense_n} expense(s) · {linked_n} linked transaction(s)",
             expanded=False,
         ):
-            if e["description"]:
-                st.caption(e["description"])
+            hdr_left, hdr_right = st.columns([5, 1])
+            with hdr_left:
+                if e["description"]:
+                    st.caption(e["description"])
+            with hdr_right:
+                if st.button("🗑️ Delete", key=f"edel_quick_{eid}"):
+                    try:
+                        with get_engine().begin() as conn:
+                            conn.execute(
+                                text("DELETE FROM budgetlens.entities WHERE id=:id"),
+                                {"id": eid},
+                            )
+                        st.success(f"Deleted **{e['name']}**.")
+                        st.rerun()
+                    except Exception as err:
+                        st.error(f"Delete failed: {err}")
 
             entity_bills = bills_by_entity.get(eid, pd.DataFrame())
             entity_income = income_by_entity.get(eid, [])
