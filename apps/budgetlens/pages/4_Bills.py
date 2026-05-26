@@ -480,6 +480,24 @@ if add_filter_value and not txns_all.empty:
         })
 
         st.markdown("**Matching Transactions** — uncheck to exclude from the average")
+
+        _add_override_key = "add_include_override"
+        _add_override = st.session_state.pop(_add_override_key, None)
+        _asa, _ada, _ = st.columns([1, 1, 8])
+        with _asa:
+            if st.button("Select All", key="add_sel_all", use_container_width=True):
+                st.session_state[_add_override_key] = True
+                st.session_state.pop(f"add_preview_editor_{_gen}", None)
+                st.rerun()
+        with _ada:
+            if st.button("Deselect All", key="add_desel_all", use_container_width=True):
+                st.session_state[_add_override_key] = False
+                st.session_state.pop(f"add_preview_editor_{_gen}", None)
+                st.rerun()
+
+        if _add_override is not None:
+            txn_add_display["Include"] = _add_override
+
         add_preview_df = st.data_editor(
             txn_add_display,
             column_config={
