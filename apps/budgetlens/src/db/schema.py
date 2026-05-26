@@ -101,15 +101,37 @@ BEGIN
         JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname = 'budgetlens' AND c.relname = 'transactions_deduped'
     ) THEN
-        EXECUTE '
+        EXECUTE $view$
             CREATE VIEW budgetlens.transactions_deduped AS
-            SELECT DISTINCT ON (content_hash)
-                id, source, transaction_date, post_date, description, original_description,
-                category, category_overridden, transaction_type, amount, memo,
-                running_balance, bill_id, imported_at, content_hash
-            FROM budgetlens.transactions
-            ORDER BY content_hash, imported_at DESC
-        ';
+            WITH staged AS (
+                SELECT DISTINCT ON (txn_hash)
+                    id, source, transaction_date, post_date, description, original_description,
+                    category        AS raw_category,
+                    transaction_type, amount, memo, running_balance, imported_at, content_hash, txn_hash
+                FROM budgetlens.transactions
+                WHERE txn_hash IS NOT NULL
+                ORDER BY txn_hash, imported_at DESC
+            )
+            SELECT
+                s.id,
+                s.source,
+                s.transaction_date,
+                s.post_date,
+                s.description,
+                s.original_description,
+                COALESCE(a.category, s.raw_category)        AS category,
+                COALESCE(a.category_overridden, FALSE)       AS category_overridden,
+                s.transaction_type,
+                s.amount,
+                s.memo,
+                s.running_balance,
+                a.bill_id,
+                s.imported_at,
+                s.content_hash,
+                s.txn_hash
+            FROM staged s
+            LEFT JOIN budgetlens.transaction_attributes a ON a.txn_hash = s.txn_hash
+        $view$;
     END IF;
 END
 $$;
@@ -297,9 +319,9 @@ def init_schema(engine):
 
     _run(DDL)
     _run(DROP_UNIQUE)
-    _run(DEDUP_VIEW)
     _run(FREQUENCY_MIGRATION)
     _run(INCOME_MIGRATION)
     _run(BILL_FILTER_MIGRATION)
     _run(ENTITY_MIGRATION)
-    _run(TXN_HASH_MIGRATION)
+    _run(TXN_HASH_MIGRATION)  # creates transaction_attributes before the bootstrap view needs it
+    _run(DEDUP_VIEW)
